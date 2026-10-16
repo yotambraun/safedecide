@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Training outputs (large; weights live on the Hugging Face Hub)
+runs/
+*.onnx
+*.safetensors
+
+# Benchmark outputs: keep the summary tables and figures, not the raw dumps
+results/*
+!results/*.md
+!results/*.png
+
+# Personal notes that are not part of the project
+private/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

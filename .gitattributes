@@ -1,0 +1,6 @@
+# Normalise line endings so Windows, macOS and Linux checkouts behave the same.
+* text=auto eol=lf
+
+*.png binary
+*.onnx binary
+*.safetensors binary

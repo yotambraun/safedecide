@@ -1,0 +1,19 @@
+# Baseline: proper scoring rules only (soft CE + Brier + RPS). A100/L4 settings.
+run_name: safedecide-base
+base_model: jhu-clsp/mmBERT-small
+profile: clean          # clean = Apache-releasable data; research adds Jev-labelled rows
+max_train_rows: null    # null = all rows of the profile
+typed_decisions_repeat: 4   # oversample the typed-decisions carve (the headline benchmark)
+max_length: 384
+max_pairs_per_batch: 96 # option pairs per step (a 4-option question = 4 pairs)
+grad_accum: 1
+epochs: 2
+lr: 5.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.06
+w_brier: 0.5
+w_rps: 0.5
+w_conftr: 0.0
+eval_every: 500
+val_max: 3000
+seed: 42

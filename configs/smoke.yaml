@@ -1,0 +1,13 @@
+# 5-minute end-to-end check of the whole pipeline. Not a real model.
+run_name: safedecide-smoke
+base_model: jhu-clsp/mmBERT-small
+profile: clean
+max_train_rows: 2000
+max_length: 256
+max_pairs_per_batch: 48
+epochs: 1
+eval_every: 50
+val_max: 300
+w_conftr: 0.1
+conftr_start_frac: 0.5
+seed: 42

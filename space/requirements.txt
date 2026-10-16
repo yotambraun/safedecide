@@ -1,0 +1,4 @@
+onnxruntime>=1.18
+transformers>=4.48
+huggingface_hub>=0.23
+numpy

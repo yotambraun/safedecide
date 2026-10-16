@@ -1,0 +1,127 @@
+# Method
+
+## 1. Setting
+
+A decision is a state *x*, a question, and a closed set of options
+{1..K}. The model returns a distribution *p(·|x)*. We act on the top option
+*ŷ = argmax p* with confidence *c(x) = max p*.
+
+The deployment question is binary per decision: **automate** (act on ŷ) or
+**escalate** (send to a human or a bigger model). A threshold policy automates
+when *c(x) ≥ λ*.
+
+## 2. The guarantee (selective risk control)
+
+We want λ such that the **selective error**
+
+    R(λ) = P( ŷ ≠ y | c(x) ≥ λ )
+
+is at most α, with high probability over the calibration data.
+
+Procedure, given *n* labelled calibration decisions, exchangeable with
+deployment data:
+
+1. Fix a grid Λ of thresholds *before looking at data* (96 values in [0, 0.999]).
+2. For each λ ∈ Λ: let *n_λ* = number of calibration decisions with c ≥ λ and
+   *k_λ* = how many of them are wrong. Compute the exact one-sided
+   Clopper–Pearson upper bound U(λ) at level 1 − δ/|Λ|.
+3. Every λ with U(λ) ≤ α is certified. Choose the smallest certified λ
+   (the most automation). If none is certified, automate nothing.
+
+**Why it is valid.** For a fixed λ, conditional on *n_λ*, the selected
+calibration decisions are i.i.d. draws from the deployment distribution
+restricted to {c ≥ λ}, so *k_λ ~ Binomial(n_λ, R(λ))* and the Clopper–Pearson
+bound is exact. Bonferroni over the |Λ| pre-specified hypotheses controls the
+probability that *any* certified λ has R(λ) > α at δ (family-wise error), so
+the chosen one is covered. This is the Learn-then-Test framework
+(Angelopoulos, Bates, Candès, Jordan, Lei 2021) with binomial p-values.
+
+**What it does not need:** calibrated probabilities. A badly calibrated model
+still gets a valid guarantee; it just automates less.
+
+**What it does need:** exchangeability. Under distribution shift the promise is
+void. `pipeline.shift_test` calibrates in-distribution and deploys on the OOD
+split to measure how badly it breaks.
+
+`test_conformal.py::test_selective_guarantee_holds_on_fresh_data` checks the
+violation rate empirically (200 trials, fresh test data each time).
+
+## 3. Prediction sets (split conformal, LAC)
+
+Non-conformity *s = 1 − p(y|x)*; *q̂* = the ⌈(n+1)(1−α)⌉/n empirical quantile
+on calibration data; set *C(x) = {k : 1 − p_k ≤ q̂}*. Then
+P(y ∈ C(x)) ≥ 1 − α (Vovk; Sadinle, Lei, Wasserman 2019).
+
+Automating only singleton sets gives P(automated ∧ wrong) ≤ α as a share of
+**all** traffic. That is a different, weaker promise than §2; we report both.
+
+## 4. Model
+
+Cross-encoder: input = `"[kind] option: <option> || question: <q>"` paired with
+the state; output = one logit. Softmax over a question's options.
+
+* **Order invariance is exact.** Permuting options permutes logits, so the
+  answer can never depend on option order. Listwise models have to learn this
+  or average over permutations.
+* **Cost.** K encoder passes per K-option question. With 42M non-embedding
+  parameters this is still a few ms per option on CPU.
+* **Portable.** A standard `AutoModelForSequenceClassification(num_labels=1)`.
+
+## 5. Training objective
+
+    L = CE(p, t) + 0.5·Brier(p, t) + 0.5·RPS(p, t)[ordinal rows] + w·ConfTr
+
+* **CE vs soft targets** (teacher distributions): distillation.
+* **Brier**: strictly proper, bounded, punishes confident mistakes.
+* **RPS** on `score` questions: respects order (4 vs 5 is a small mistake, 0 vs 5 a big one).
+* **ConfTr** (Stutz et al. 2022): split each batch, compute the α-quantile of
+  true-class probabilities on one half (the THR threshold), soft set membership
+  on the other half, penalise expected set size above 1. Turned on after 30% of
+  training so the model first learns sensible probabilities.
+
+Model selection: best validation **NLL** (a proper score), not accuracy.
+
+## 6. Calibration order
+
+The calibration pool is the jev-distill `calibration` split plus a calibration
+carve of typed-decisions `train` (by case; disjoint from the train and validation
+carves; `test` is never used). The guarantee therefore refers to that mixture.
+
+1. Split the calibration pool in two disjoint halves.
+2. Half A: one temperature per question kind (noul / choice / score), fitted by NLL.
+3. Half B: the selective threshold of §2 on the temperature-scaled confidences.
+
+Disjoint halves keep the guarantee valid (the temperature is fixed before §2 sees half B).
+
+## 7. Evaluation protocol
+
+* **Pools**: typed-decisions `test` (headline; 400 cases, 2,000 decisions),
+  jev-distill `test_set_30k` (in-distribution, never trained on) and `ood`.
+* **typed-decisions official metrics**: accuracy against the gold label,
+  KL(gold ‖ prediction), Brier against the soft gold, ECE. Our scorer reproduces
+  the benchmark's Uniform reference row (KL 0.444, Brier 0.238); see
+  `tests/test_typed_decisions.py`. The benchmark leaves ECE binning open; we use
+  15 equal-width bins on top-option confidence.
+* **Automation @ α**: 100 random calibration/test splits of each pool, by case
+  (the five questions about one case never straddle the split). Report the mean
+  automation rate, the realised selective error and the violation rate, and plot
+  the realised error of every split (the validity figure).
+* **Intervals**: 95% bootstrap intervals resampling whole cases, so correlated
+  questions do not make intervals look tighter than they are.
+* **Ablation**: identical config with and without ConfTr, same seed; the
+  automation difference is paired split by split.
+* **Shipped threshold**: the threshold saved with the model, applied unchanged
+  to typed-decisions `test`.
+* **Shift test**: threshold from `test_set_30k`, deployed on `ood`.
+* **Baselines**: Phocinae-Largha-150M-v1 (same mmBERT-small base), called through
+  its own engine with each question's instructions and criteria, as in its
+  published evaluation; only reported if our harness reproduces its published
+  accuracy within one point. Prior and Uniform reference rows as in the benchmark.
+
+## References
+
+* Stutz, Dvijotham, Cemgil, Doucet. *Learning Optimal Conformal Classifiers.* ICLR 2022.
+* Angelopoulos, Bates, Candès, Jordan, Lei. *Learn then Test: Calibrating Predictive Algorithms to Achieve Risk Control.* 2021.
+* Geifman, El-Yaniv. *Selective Classification for Deep Neural Networks.* NeurIPS 2017.
+* Sadinle, Lei, Wasserman. *Least Ambiguous Set-Valued Classifiers with Bounded Error Levels.* JASA 2019.
+* Marone et al. *mmBERT: A Modern Multilingual Encoder with Annealed Language Learning.* 2025.

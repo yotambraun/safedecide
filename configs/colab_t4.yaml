@@ -1,0 +1,18 @@
+# Free/low-tier Colab T4 (16 GB, fp16): shorter sequences, 1 epoch, checkpointing.
+run_name: safedecide-t4
+base_model: jhu-clsp/mmBERT-small
+profile: clean
+max_train_rows: 60000
+typed_decisions_repeat: 4   # oversample the typed-decisions carve (the headline benchmark)
+max_length: 320
+max_pairs_per_batch: 48
+grad_accum: 2
+epochs: 1
+lr: 5.0e-5
+w_brier: 0.5
+w_rps: 0.5
+w_conftr: 0.0
+eval_every: 400
+val_max: 2000
+gradient_checkpointing: true
+seed: 42
