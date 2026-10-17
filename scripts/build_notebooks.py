@@ -64,14 +64,16 @@ md(
     """
 # SafeDecide 1/2: train, calibrate, evaluate (GPU)
 
-This is the only notebook that needs a paid GPU. It trains the baseline and the Conformal
-Training model on the same data and seed, calibrates both, evaluates them, and saves
-everything to Google Drive. Export, model card and publishing run in
-`02_publish_cpu.ipynb` on a free CPU runtime.
+This is the only notebook that needs a paid GPU. Stage 1 trains a general model on
+jev-distill plus typed-decisions, with and without Conformal Training. Stage 2 fits it to
+typed-decisions alone, again with and without Conformal Training. Every model is calibrated
+and evaluated, and everything is saved to Google Drive. Export, model card and publishing run
+in `02_publish_cpu.ipynb` on a free CPU runtime.
 
-**Budget.** About 25 minutes per training run (two runs) plus about 15 minutes of
-setup and evaluation: roughly 70 minutes of GPU time. Set `TRAIN_MINUTES` below to
-change it. The runtime disconnects itself at the end so it stops using compute units.
+**Budget.** About 25 minutes per stage-1 run (two runs), 5 minutes per stage-2 run (three
+runs) and 15 minutes of setup and evaluation: roughly 80 minutes of GPU time. Set
+`TRAIN_MINUTES` below to change stage 1. Runs already on Drive are reused, not retrained.
+The runtime disconnects itself at the end so it stops using compute units.
 
 **Before you run.**
 1. *Runtime → Change runtime type → A100 GPU* (L4 also works; T4 uses a lighter config).
