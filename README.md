@@ -23,9 +23,9 @@ these models shifts with task and phrasing (an
 measured a 0.125 mean probability gap between asking the same thing as a yes/no
 and as a two-option choice).
 
-[Model](https://huggingface.co/yotambraun/safedecide-140m) ·
-[Demo](https://huggingface.co/spaces/yotambraun/safedecide) ·
-[Raw results](https://huggingface.co/datasets/yotambraun/safedecide-results) ·
+[Model](https://huggingface.co/yotambr/safedecide-140m) ·
+[Demo](https://huggingface.co/spaces/yotambr/safedecide) ·
+[Raw results](https://huggingface.co/datasets/yotambr/safedecide-results) ·
 [Method](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md)
 
 ## Results
@@ -43,8 +43,8 @@ On [typed-decisions](https://huggingface.co/datasets/LocalLLaMA/typed-decisions)
 *Automation @ 5%*: share of decisions automated with the error among them
 guaranteed ≤ 5% (δ = 10%), mean over 100 random calibration/test splits by case.
 Full tables with 95% intervals, the ablation and the distribution-shift test are in
-the [model card](https://huggingface.co/yotambraun/safedecide-140m); every
-per-decision prediction is in the [results dataset](https://huggingface.co/datasets/yotambraun/safedecide-results).
+the [model card](https://huggingface.co/yotambr/safedecide-140m); every
+per-decision prediction is in the [results dataset](https://huggingface.co/datasets/yotambr/safedecide-results).
 
 ## Install
 
@@ -60,7 +60,7 @@ pip install "safedecide[all]"
 ```python
 from safedecide import SafeDecider
 
-decider = SafeDecider.from_pretrained("yotambraun/safedecide-140m")
+decider = SafeDecider.from_pretrained("yotambr/safedecide-140m")
 resp = decider.decide(
     {
         "state": "Agent wants to run `rm -rf /var/data` on prod to free disk space.",
@@ -79,7 +79,7 @@ resp["guarantee"]["statement"]  # the promise, in words
 ```
 
 The request and response follow the `/v1/systemone` shape, so
-`safedecide serve --model yotambraun/safedecide-140m` is a drop-in local server.
+`safedecide serve --model yotambr/safedecide-140m` is a drop-in local server.
 
 ## Calibrate on your own traffic
 
@@ -90,7 +90,7 @@ The shipped threshold is calibrated on public data. For the guarantee to hold on
 from safedecide.pipeline import calibrate_checkpoint
 
 calibrate_checkpoint(
-    "yotambraun/safedecide-140m", my_labelled_decisions, alpha=0.05, delta=0.1, output_dir="safedecide-mine"
+    "yotambr/safedecide-140m", my_labelled_decisions, alpha=0.05, delta=0.1, output_dir="safedecide-mine"
 )
 decider = SafeDecider.from_pretrained("safedecide-mine")
 ```

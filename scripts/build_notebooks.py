@@ -418,7 +418,7 @@ import datetime
 from safedecide.hub import render_model_card
 from safedecide.typed_decisions import eval_results_yaml
 
-HF_USER = "yotambraun"
+HF_USER = "yotambr"  # Hugging Face username (GitHub is yotambraun)
 MODEL_REPO = f"{HF_USER}/safedecide-140m"
 RESULTS_REPO = f"{HF_USER}/safedecide-results"
 SPACE_REPO = f"{HF_USER}/safedecide"

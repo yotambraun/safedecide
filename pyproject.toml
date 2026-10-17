@@ -50,7 +50,7 @@ Homepage = "https://github.com/yotambraun/safedecide"
 Source = "https://github.com/yotambraun/safedecide"
 Issues = "https://github.com/yotambraun/safedecide/issues"
 Changelog = "https://github.com/yotambraun/safedecide/blob/main/CHANGELOG.md"
-Model = "https://huggingface.co/yotambraun/safedecide-140m"
+Model = "https://huggingface.co/yotambr/safedecide-140m"
 
 [dependency-groups]
 dev = ["safedecide[all]", "pytest>=8", "ruff>=0.15"]

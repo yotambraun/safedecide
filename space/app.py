@@ -15,7 +15,7 @@ import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 from transformers import AutoTokenizer
 
-MODEL_REPO = os.environ.get("MODEL_REPO", "yotambraun/safedecide-140m")
+MODEL_REPO = os.environ.get("MODEL_REPO", "yotambr/safedecide-140m")
 
 
 def model_file(name: str) -> str:
