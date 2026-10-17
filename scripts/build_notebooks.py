@@ -144,7 +144,7 @@ code(
     """
 probe = TrainConfig.from_yaml(CONFIG, run_name="probe", profile=PROFILE, output_dir="/content/probe")
 probe.max_steps, probe.eval_every, probe.val_max = 40, 10**9, 64
-SEC_PER_STEP = train(probe, train_set, val_set)["seconds_per_step"]
+SEC_PER_STEP = train(probe, train_set, val_set)["train_step_seconds"]  # median step time, start-up excluded
 MAX_STEPS = int(TRAIN_MINUTES * 60 * 0.85 / SEC_PER_STEP)  # 15% headroom for evaluation and checkpoints
 print(f"{SEC_PER_STEP:.3f} s/step -> {MAX_STEPS} steps per run")
 """,

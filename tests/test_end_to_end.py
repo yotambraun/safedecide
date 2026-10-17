@@ -276,9 +276,11 @@ def test_step_and_time_budget(tiny, tmp_path):
     cfg.max_steps, cfg.eval_every = 7, 1000
     summary = train(cfg, synthetic(100, 8), synthetic(20, 9), model=model, tokenizer=tok)
     assert summary["steps"] == 7
+    assert 0 < summary["train_step_seconds"] <= summary["seconds_per_step"]  # steps 6-7 only, no eval or save
     assert (tmp_path / "budget" / "best" / "safedecide_config.json").exists()  # final eval always saves
 
     cfg = TrainConfig(run_name="clock", output_dir=str(tmp_path), max_length=48, max_pairs_per_batch=40, epochs=50)
     cfg.max_minutes, cfg.eval_every = 0.0, 1000
     summary = train(cfg, synthetic(100, 8), synthetic(20, 9), model=model, tokenizer=tok)
     assert summary["steps"] == 1
+    assert summary["train_step_seconds"] is None  # too short to time

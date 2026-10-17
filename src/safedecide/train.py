@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import statistics
 import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -120,7 +121,8 @@ def train(
     scaler = torch.amp.GradScaler("cuda", enabled=amp_dtype == torch.float16)
 
     best_nll, step, epoch, history = float("inf"), 0, 0, []
-    t0 = time.time()
+    t0 = t_last = time.time()
+    step_seconds = []  # optimizer-step durations, without evaluation and the first few warm-up steps
     log = log_path.open("w", encoding="utf-8")
     while step < total_steps:
         batches = make_batches(train_set, cfg.max_pairs_per_batch, shuffle=True, seed=cfg.seed + epoch)
@@ -162,6 +164,10 @@ def train(
                 "loss": float(loss.detach()),
                 **parts,
             }
+            now = time.time()  # float(loss) above synchronised the GPU, so this is the real step time
+            if step > 5:
+                step_seconds.append(now - t_last)
+            t_last = now
             if step % 50 == 0:
                 print(
                     f"step {step}/{total_steps} loss {rec['loss']:.4f} ce {parts['ce']:.4f} ({time.time() - t0:.0f}s)"
@@ -188,6 +194,7 @@ def train(
                         "val": m,
                     }
                     (best_dir / CONFIG_NAME).write_text(json.dumps(cfg_out, indent=2), encoding="utf-8")
+                t_last = time.time()
             log.write(json.dumps(rec) + "\n")
             log.flush()
             if step >= total_steps:
@@ -200,6 +207,7 @@ def train(
         "steps": step,
         "minutes": round((time.time() - t0) / 60, 2),
         "seconds_per_step": round((time.time() - t0) / max(1, step), 3),
+        "train_step_seconds": round(statistics.median(step_seconds), 4) if step_seconds else None,
         "history": history,
     }
     (out_dir / "train_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
