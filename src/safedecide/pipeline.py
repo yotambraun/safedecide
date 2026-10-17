@@ -18,6 +18,7 @@ from .conformal import (
     conformal_set_stats,
     risk_coverage_curve,
 )
+from .data import split_by_group
 from .metrics import bootstrap_ci, summarize, top_confidence
 from .predict import CONFIG_NAME, SafeDecider, resolve_model_dir
 from .schema import Decision
@@ -41,7 +42,7 @@ def calibrate_checkpoint(
     output_dir: str | None = None,
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
-    selective threshold on the other half (disjoint, so the guarantee is valid).
+    selective threshold on the other half (disjoint by case, so the guarantee is valid).
     Writes everything into ``safedecide_config.json`` next to the weights.
 
     ``path`` is a local checkpoint or a Hub repo id. A Hub model is first
@@ -52,11 +53,7 @@ def calibrate_checkpoint(
         path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1])
     decider = SafeDecider.from_pretrained(path)
     cal = list(calibration_set)
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(len(cal))
-    cut = int(len(cal) * temp_fraction)
-    temp_set = [cal[i] for i in perm[:cut]]
-    conf_set = [cal[i] for i in perm[cut:]]
+    temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # questions about one case stay together
 
     logits_t = decider.logits(temp_set)
     temps = fit_temperatures(logits_t, [np.array(d.target) for d in temp_set], [d.kind for d in temp_set])

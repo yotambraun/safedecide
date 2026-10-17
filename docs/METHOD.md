@@ -81,11 +81,22 @@ the state; output = one logit. Softmax over a question's options.
 
 Model selection: best validation **NLL** (a proper score), not accuracy.
 
+**Two stages.** Stage 1 trains on jev-distill `openjev_v2` plus the typed-decisions
+train carve (384 tokens). Stage 2 starts from the stage-1 baseline and fits the
+typed-decisions train carve alone (640 tokens, so no typed-decisions input is
+truncated). The two datasets are labelled by different teacher models, and
+typed-decisions scores agreement with its own teacher, so a model that keeps
+mixing both learns a blend of the two. The stage-2 ConfTr ablation starts from
+the same checkpoint with the same data and seed as its baseline. A third run fits
+typed-decisions alone from mmBERT-small, to measure what stage 1 adds.
+
 ## 6. Calibration order
 
-The calibration pool is the jev-distill `calibration` split plus a calibration
-carve of typed-decisions `train` (by case; disjoint from the train and validation
-carves; `test` is never used). The guarantee therefore refers to that mixture.
+Stage-2 models (the release candidates) are calibrated on a calibration carve
+of typed-decisions `train` (by case; disjoint from the train and validation
+carves; `test` is never used), so their guarantee refers to typed-decisions data.
+Stage-1 models use that carve plus the jev-distill `calibration` split, and their
+guarantee refers to the mixture.
 
 1. Split the calibration pool in two disjoint halves.
 2. Half A: one temperature per question kind (noul / choice / score), fitted by NLL.
@@ -108,8 +119,9 @@ Disjoint halves keep the guarantee valid (the temperature is fixed before §2 se
   the realised error of every split (the validity figure).
 * **Intervals**: 95% bootstrap intervals resampling whole cases, so correlated
   questions do not make intervals look tighter than they are.
-* **Ablation**: identical config with and without ConfTr, same seed; the
-  automation difference is paired split by split.
+* **Ablation**: identical config with and without ConfTr, same seed (and, in
+  stage 2, the same starting checkpoint); the automation difference is paired
+  split by split.
 * **Shipped threshold**: the threshold saved with the model, applied unchanged
   to typed-decisions `test`.
 * **Shift test**: threshold from `test_set_30k`, deployed on `ood`.

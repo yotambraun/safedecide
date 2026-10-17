@@ -118,9 +118,12 @@ Serve it behind the same `/v1/systemone` API as Jev: `safedecide serve --model $
   so it exports to ONNX and runs in the browser with transformers.js.
 * **Training:** soft-label cross-entropy against teacher distributions + Brier
   score (proper scoring) + ranked probability score for ordinal questions +
-  Conformal Training size penalty (Stutz et al., ICLR 2022).
+  Conformal Training size penalty (Stutz et al., ICLR 2022). Two stages: jev-distill
+  `openjev_v2` plus the typed-decisions train carve, then the typed-decisions train
+  carve alone at 640 tokens (no typed-decisions input is truncated).
 * **Calibration:** per-kind temperature scaling (temperatures: `$temperatures`),
-  then the selective threshold (`$threshold`) on a disjoint calibration split.
+  then the selective threshold (`$threshold`) on a disjoint split of the
+  typed-decisions calibration carve (by case, never `test`).
 
 ## Data and license
 

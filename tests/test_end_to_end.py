@@ -284,3 +284,26 @@ def test_step_and_time_budget(tiny, tmp_path):
     summary = train(cfg, synthetic(100, 8), synthetic(20, 9), model=model, tokenizer=tok)
     assert summary["steps"] == 1
     assert summary["train_step_seconds"] is None  # too short to time
+
+
+@pytest.mark.e2e
+def test_stage_two_starts_from_checkpoint(tiny, tmp_path):
+    """Stage 2 loads stage-1 weights but keeps recording the original base model."""
+    import json
+
+    from safedecide.train import TrainConfig, train
+
+    tok, model, _ = tiny
+    stage1 = TrainConfig(run_name="stage1", output_dir=str(tmp_path), max_length=48, max_pairs_per_batch=40)
+    stage1.max_steps, stage1.eval_every = 3, 1000
+    best = train(stage1, synthetic(60, 10), synthetic(20, 11), model=model, tokenizer=tok)["best_dir"]
+
+    stage2 = TrainConfig(
+        run_name="stage2", output_dir=str(tmp_path), max_length=48, max_pairs_per_batch=40, init_from=best
+    )
+    stage2.max_steps, stage2.eval_every = 2, 1000
+    summary = train(stage2, synthetic(60, 12), synthetic(20, 13))
+    cfg = json.loads((tmp_path / "stage2" / "best" / "safedecide_config.json").read_text(encoding="utf-8"))
+    assert summary["steps"] == 2
+    assert cfg["base_model"] == "jhu-clsp/mmBERT-small"
+    assert cfg["init_from"] == "best"

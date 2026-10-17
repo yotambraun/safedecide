@@ -25,6 +25,7 @@ from .schema import Decision
 class TrainConfig:
     run_name: str = "safedecide-base"
     base_model: str = "jhu-clsp/mmBERT-small"
+    init_from: str | None = None  # start from these weights (a stage-1 checkpoint); base_model stays the record
     profile: str = "clean"
     max_train_rows: int | None = None
     typed_decisions_repeat: int = 1
@@ -101,7 +102,7 @@ def train(
     seed_everything(cfg.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if model is None or tokenizer is None:
-        tokenizer, model = load_backbone(cfg.base_model, cfg.gradient_checkpointing)
+        tokenizer, model = load_backbone(cfg.init_from or cfg.base_model, cfg.gradient_checkpointing)
     model.to(device).train()
 
     out_dir = Path(cfg.output_dir) / cfg.run_name
@@ -188,6 +189,7 @@ def train(
                     cfg_out = {
                         "max_length": cfg.max_length,
                         "base_model": cfg.base_model,
+                        "init_from": Path(cfg.init_from).name if cfg.init_from else None,
                         "profile": cfg.profile,
                         "run_name": cfg.run_name,
                         "best_step": step,

@@ -89,6 +89,7 @@ code(
 import json
 import shutil
 import time
+from pathlib import Path
 
 import torch
 
@@ -144,12 +145,13 @@ code(
     """
 probe = TrainConfig.from_yaml(CONFIG, run_name="probe", profile=PROFILE, output_dir="/content/probe")
 probe.max_steps, probe.eval_every, probe.val_max = 40, 10**9, 64
-SEC_PER_STEP = train(probe, train_set, val_set)["train_step_seconds"]  # median step time, start-up excluded
+probe_summary = train(probe, train_set, val_set)
+SEC_PER_STEP = probe_summary["train_step_seconds"] or probe_summary["seconds_per_step"]  # start-up excluded
 MAX_STEPS = int(TRAIN_MINUTES * 60 * 0.85 / SEC_PER_STEP)  # 15% headroom for evaluation and checkpoints
 print(f"{SEC_PER_STEP:.3f} s/step -> {MAX_STEPS} steps per run")
 """,
 )
-md(gpu, "## Train: baseline, then Conformal Training (same data, same seed)")
+md(gpu, "## Stage 1: general training (baseline, then Conformal Training; same data, same seed)")
 code(
     gpu,
     """
@@ -176,12 +178,66 @@ import matplotlib.pyplot as plt
 
 from safedecide.report import SERIES, _style
 
-fig, ax = plt.subplots(figsize=(7, 3.5), dpi=120)
-for i, (name, s) in enumerate([("no ConfTr", summary_base), ("ConfTr", summary_ct)]):
-    ax.plot([r["step"] for r in s["history"]], [r["nll"] for r in s["history"]], color=SERIES[i], lw=2, label=name)
-_style(ax, "Validation NLL", "step", "NLL (lower is better)")
-ax.legend(frameon=False)
-plt.show()
+
+def plot_val_nll(runs, title):
+    fig, ax = plt.subplots(figsize=(7, 3.5), dpi=120)
+    for i, (name, s) in enumerate(runs):
+        ax.plot([r["step"] for r in s["history"]], [r["nll"] for r in s["history"]], color=SERIES[i], lw=2, label=name)
+    _style(ax, title, "step", "NLL (lower is better)")
+    ax.legend(frameon=False)
+    plt.show()
+
+
+plot_val_nll([("no ConfTr", summary_base), ("ConfTr", summary_ct)], "Stage 1: validation NLL")
+""",
+)
+md(
+    gpu,
+    """
+## Stage 2: fit on typed-decisions `train`
+
+typed-decisions gold comes from its own teacher model; jev-distill labels come from a different
+one. Stage 2 fine-tunes on the typed-decisions train carve alone, with no input truncated, which
+is the setting of that benchmark's "fitted on train" table. Both stage-2 runs start from the
+stage-1 baseline with the same data and seed, so Conformal Training is the only difference. A
+third run fits typed-decisions alone, straight from mmBERT-small, to measure what stage 1 adds.
+About 5 minutes per run on an A100.
+""",
+)
+code(
+    gpu,
+    """
+from safedecide.data import typed_decisions_splits
+
+TD = typed_decisions_splits()  # train / validation / calibration carve of typed-decisions train, by case
+TD_CONFIG = "configs/typed_decisions.yaml"
+SMALL_GPU = {} if CONFIG == "configs/base.yaml" else {"max_pairs_per_batch": 32, "grad_accum": 2,
+                                                      "gradient_checkpointing": True}
+
+
+def run_td(name, init_from, **overrides):
+    done = f"{OUT}/runs/{name}"
+    if os.path.exists(f"{done}/train_summary.json"):
+        print(f"{name}: already trained, using {done}")
+        return done, json.load(open(f"{done}/train_summary.json"))
+    cfg = TrainConfig.from_yaml(TD_CONFIG, run_name=name, init_from=init_from, output_dir="/content/runs",
+                                **SMALL_GPU, **overrides)
+    summary = train(cfg, TD["train"], TD["validation"])
+    shutil.copytree(summary["best_dir"], done, dirs_exist_ok=True)
+    json.dump(summary, open(f"{done}/train_summary.json", "w"), indent=1)
+    return done, summary
+
+
+TD_DIR, summary_td = run_td("safedecide-td", BASE_DIR)
+""",
+)
+code(gpu, 'TDCT_DIR, summary_tdct = run_td("safedecide-td-conftr", BASE_DIR, w_conftr=0.1, conftr_alpha=ALPHA)')
+code(gpu, 'TDONLY_DIR, summary_tdonly = run_td("safedecide-td-only", None, lr=5e-5)')
+code(
+    gpu,
+    """
+plot_val_nll([("no ConfTr", summary_td), ("ConfTr", summary_tdct), ("typed-decisions only", summary_tdonly)],
+             "Stage 2: typed-decisions validation NLL")
 """,
 )
 md(
@@ -189,12 +245,14 @@ md(
     """
 ## Calibrate (where the guarantee comes from)
 
-Half of the calibration carve fits one temperature per question type; the other, disjoint
-half fits the automate/escalate threshold with exact Clopper–Pearson bounds. The result is
-written into `safedecide_config.json` next to the weights.
+Half of a calibration carve fits one temperature per question type; the other, disjoint half
+fits the automate/escalate threshold with exact Clopper–Pearson bounds. The result is written
+into `safedecide_config.json` next to the weights. Stage-1 models use the mixed carve
+(jev-distill + typed-decisions); stage-2 models use the typed-decisions carve, the data they
+are fitted for.
 
-The model to release is chosen here, on calibration data (most decisions automated), never
-on test data.
+The model to release is chosen among the stage-2 models here, on calibration data (most
+decisions automated), never on test data.
 """,
 )
 code(
@@ -202,11 +260,16 @@ code(
     """
 from safedecide.pipeline import calibrate_checkpoint
 
-cal = {path: calibrate_checkpoint(path, calib_set, alpha=ALPHA, delta=DELTA) for path in (BASE_DIR, CT_DIR)}
+GENERAL = {CT_DIR: "SafeDecide general (ConfTr)", BASE_DIR: "SafeDecide general (no ConfTr)"}
+FITTED = {TDCT_DIR: "SafeDecide (ConfTr)", TD_DIR: "SafeDecide (no ConfTr)",
+          TDONLY_DIR: "SafeDecide, typed-decisions only"}
+cal = {p: calibrate_checkpoint(p, calib_set, alpha=ALPHA, delta=DELTA) for p in GENERAL}
+cal |= {p: calibrate_checkpoint(p, TD["calibration"], alpha=ALPHA, delta=DELTA) for p in FITTED}
 for path, c in cal.items():
     print(path, json.dumps({"temperatures": c["temperatures"], "rule": c["selective_rule"]}, indent=1))
-BEST_DIR = max(cal, key=lambda p: (cal[p]["selective_rule"]["calibration_automation"], -cal[p]["val"]["nll"]))
-print("Release candidate:", BEST_DIR)
+BEST_DIR = max(FITTED, key=lambda p: (cal[p]["selective_rule"]["calibration_automation"], -cal[p]["val"]["nll"]))
+RELEASE_NAME = FITTED[BEST_DIR]
+print("Release candidate:", RELEASE_NAME, BEST_DIR)
 """,
 )
 md(gpu, "## Evaluate on every pool")
@@ -216,14 +279,13 @@ code(
 from IPython.display import Markdown, display
 
 from safedecide.adapters import LocalAdapter
-from safedecide.data import typed_decisions_splits
 from safedecide.pipeline import benchmark, save_predictions, save_results, shift_test, shipped_rule_check
 from safedecide.report import ablation_table, markdown_table
 from safedecide.typed_decisions import PriorAdapter, UniformAdapter, score_typed_decisions
 
 RES = f"{OUT}/results"
-names = {CT_DIR: "SafeDecide (ConfTr)", BASE_DIR: "SafeDecide (no ConfTr)"}
-references = [PriorAdapter(typed_decisions_splits()["train"]), UniformAdapter()]
+names = {**FITTED, **GENERAL}
+references = [PriorAdapter(TD["train"]), UniformAdapter()]
 all_results, td_scores = {}, {}
 for pool_name, pool in pools.items():
     adapters = [LocalAdapter(p, name=n) for p, n in names.items()]
@@ -248,10 +310,15 @@ code(
 from safedecide.typed_decisions import markdown_table as td_table
 
 display(Markdown("### typed-decisions, official metrics\\n\\n" + td_table(td_scores)))
-ablation = "\\n\\n".join(
-    f"**{pool_name}**\\n\\n" + ablation_table(res[0], res[1], (0.01, 0.02, ALPHA, 0.10, 0.20))
-    for pool_name, res in all_results.items()
-)
+PAIRS = [("stage 2", "SafeDecide (ConfTr)", "SafeDecide (no ConfTr)"),
+         ("stage 1", "SafeDecide general (ConfTr)", "SafeDecide general (no ConfTr)")]
+parts = []
+for pool_name, res in all_results.items():
+    by_name = {r["model"]: r for r in res}
+    for stage, with_ct, without_ct in PAIRS:
+        parts.append(f"**{pool_name}, {stage}**\\n\\n"
+                     + ablation_table(by_name[with_ct], by_name[without_ct], (0.01, 0.02, ALPHA, 0.10, 0.20)))
+ablation = "\\n\\n".join(parts)
 open(f"{RES}/ablation.md", "w").write(ablation)
 display(Markdown("### Does Conformal Training help? (paired over identical splits)\\n\\n" + ablation))
 """,
@@ -261,10 +328,11 @@ md(
     """
 ## Out of the box and under shift
 
-*Shipped threshold*: the threshold saved with the model, applied unchanged to typed-decisions
-test. *Shift test*: a threshold calibrated on jev-distill `test_set_30k`, deployed on its `ood`
-split. The guarantee only promises anything when deployment data looks like calibration data;
-report both results either way.
+*Shipped threshold*: the threshold saved with the released model (calibrated on the
+typed-decisions calibration carve), applied unchanged to typed-decisions test. *Shift test*: a
+threshold calibrated on jev-distill `test_set_30k`, deployed on its `ood` split. The guarantee
+only promises anything when deployment data looks like calibration data; report both results
+either way.
 """,
 )
 code(
@@ -272,8 +340,9 @@ code(
     """
 shipped = shipped_rule_check(BEST_DIR, pools["typed_decisions_test"])
 shift = shift_test(LocalAdapter(BEST_DIR), pools["jev_test_30k"], pools["jev_ood"], ALPHA, DELTA)
-json.dump({"release": BEST_DIR, "shipped_rule_on_typed_decisions_test": shipped, "shift": shift,
-           "gpu": GPU, "seconds_per_step": SEC_PER_STEP, "max_steps": MAX_STEPS},
+json.dump({"release": BEST_DIR, "release_name": RELEASE_NAME, "shipped_rule_on_typed_decisions_test": shipped,
+           "shift": shift, "gpu": GPU, "train_step_seconds": SEC_PER_STEP,
+           "steps": {Path(p).name: json.load(open(f"{p}/train_summary.json"))["steps"] for p in names}},
           open(f"{RES}/run_info.json", "w"), indent=1)
 json.dump(shift, open(f"{RES}/shift.json", "w"), indent=1)
 print(json.dumps({"shipped": shipped, "shift": shift}, indent=1))
@@ -385,10 +454,11 @@ save_results(results["typed_decisions_test"], f"{RES}/typed_decisions_test.json"
 md_parts = ["## typed-decisions (test, 2,000 decisions)\\n\\n" + td_table(td_scores)]
 for pool, res in results.items():
     md_parts.append(f"## {pool}: Automation @ {ALPHA:.0%}\\n\\n" + markdown_table(res, ALPHA))
-    plot_automation_vs_alpha(res, f"{RES}/{pool}_automation_vs_alpha.png")
-    plot_risk_coverage(res, f"{RES}/{pool}_risk_coverage.png", ALPHA)
-    plot_automation(res, f"{RES}/{pool}_automation.png", ALPHA)
-    plot_validity(res, f"{RES}/{pool}_validity.png", ALPHA)
+    shown = [r for r in res if not r["model"].startswith("SafeDecide general")]  # stage 1 stays in the tables
+    plot_automation_vs_alpha(shown, f"{RES}/{pool}_automation_vs_alpha.png")
+    plot_risk_coverage(shown, f"{RES}/{pool}_risk_coverage.png", ALPHA)
+    plot_automation(shown, f"{RES}/{pool}_automation.png", ALPHA)
+    plot_validity(shown, f"{RES}/{pool}_validity.png", ALPHA)
 leaderboard = "\\n\\n".join(md_parts)
 open(f"{RES}/leaderboard.md", "w").write(leaderboard)
 display(Markdown(leaderboard))
@@ -427,7 +497,7 @@ card = render_model_card(BEST_DIR, MODEL_REPO, results["typed_decisions_test"],
                          ablation_md=open(f"{RES}/ablation.md").read(),
                          shift=json.load(open(f"{RES}/shift.json")), latency=latency, alpha=ALPHA,
                          results_repo=RESULTS_REPO)
-release_name = "SafeDecide (ConfTr)" if BEST_DIR.endswith("conftr") else "SafeDecide (no ConfTr)"
+release_name = info["release_name"]
 eval_yaml = eval_results_yaml(
     td_scores[release_name], source_url=f"https://huggingface.co/datasets/{RESULTS_REPO}", user=HF_USER,
     date=str(datetime.date.today()),

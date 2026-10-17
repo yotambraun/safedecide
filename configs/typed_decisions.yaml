@@ -1,0 +1,18 @@
+# Stage 2: fit on the typed-decisions train carve only, starting from a stage-1 checkpoint
+# (the benchmark's "fitted on train" setting; its gold comes from one teacher, jev-distill from another).
+run_name: safedecide-td
+base_model: jhu-clsp/mmBERT-small
+profile: clean
+max_length: 640         # no truncation: the longest typed-decisions input is 604 tokens
+max_pairs_per_batch: 64
+grad_accum: 1
+epochs: 4
+lr: 3.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.06
+w_brier: 0.5
+w_rps: 0.5
+w_conftr: 0.0
+eval_every: 50
+val_max: 3000
+seed: 42
