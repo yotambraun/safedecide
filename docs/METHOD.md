@@ -121,7 +121,10 @@ Disjoint halves keep the guarantee valid (the temperature is fixed before §2 se
   questions do not make intervals look tighter than they are.
 * **Ablation**: identical config with and without ConfTr, same seed (and, in
   stage 2, the same starting checkpoint); the automation difference is paired
-  split by split.
+  split by split. GPU kernels are not bitwise deterministic: in stage 2 the two
+  runs already differ slightly before ConfTr switches on (step-50 training loss
+  0.884 vs 0.889 on an A100). Each configuration is a single seed, so read the
+  ablation's spread over splits as a lower bound on the uncertainty.
 * **Shipped threshold**: the threshold saved with the model, applied unchanged
   to typed-decisions `test`.
 * **Shift test**: threshold from `test_set_30k`, deployed on `ood`.
