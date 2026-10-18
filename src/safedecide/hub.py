@@ -118,20 +118,60 @@ def push_model(
 
 RESULTS_CARD = """---
 license: apache-2.0
+pretty_name: SafeDecide evaluation results
 tags:
 - typed-decisions
 - calibration
 - conformal-prediction
+- selective-prediction
+configs:
+- config_name: typed_decisions_test
+  data_files: predictions/typed_decisions_test/*.jsonl
+  default: true
+- config_name: jev_test_30k
+  data_files: predictions/jev_test_30k/*.jsonl
+- config_name: jev_ood
+  data_files: predictions/jev_ood/*.jsonl
 ---
 
-# {repo_id}
+# SafeDecide evaluation results
 
-Raw evaluation outputs behind the numbers in the [{model_repo}](https://huggingface.co/{model_repo})
-model card: benchmark summaries (`*.json`), figures (`*.png`) and per-decision predictions
-(`predictions/<pool>/<model>.jsonl`, one line per decision with the predicted
-probabilities, the soft gold target and the gold label).
+Every number in the [{model_repo}](https://huggingface.co/{model_repo}) model card can be
+recomputed from the files here. The viewer shows the per-decision predictions, one tab per
+test set:
 
-Produced by the evaluation notebooks in https://github.com/yotambraun/safedecide.
+| Tab | Test set |
+|---|---|
+| `typed_decisions_test` | [typed-decisions](https://huggingface.co/datasets/LocalLLaMA/typed-decisions) `test`: 400 cases, 2,000 decisions |
+| `jev_test_30k` | jev-distill `test_set_30k` (sample), never trained on |
+| `jev_ood` | jev-distill `ood` (sample): the distribution-shift test |
+
+Each row is one decision scored by one model:
+
+| Column | Meaning |
+|---|---|
+| `id` | `<case>:<question>`; questions about the same case share the prefix |
+| `model` | which model produced the row (the released one is `SafeDecide (no ConfTr)`) |
+| `kind` | `noul` (yes/no), `choice` or `score` |
+| `options` | the answer options, in order |
+| `probs` | the model's calibrated probability for each option |
+| `target` | the benchmark's soft gold distribution |
+| `label` | the benchmark's gold answer |
+
+```python
+from datasets import load_dataset
+
+rows = load_dataset("{repo_id}", "typed_decisions_test", split="train")
+released = rows.filter(lambda r: r["model"] == "SafeDecide (no ConfTr)")
+```
+
+Also here: the summary tables (`leaderboard.md`, `ablation.md`, `automation_board.md`), the
+same data as JSON (`typed_decisions_test.json`, `typed_decisions_official.json`,
+`automation_board.json`, `shift.json`, `run_info.json`) and the figures (`*.png`).
+Phocinae-Largha-150M-v1 rows are its shipped weights, which saw 500 of the 2,000
+typed-decisions test decisions in training.
+
+Produced by the notebooks in [yotambraun/safedecide](https://github.com/yotambraun/safedecide).
 """
 
 
