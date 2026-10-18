@@ -4,7 +4,7 @@ import pytest
 
 from safedecide.adapters import decision_to_systemone_question, parse_systemone_answer
 from safedecide.data import describe, jev_row_to_decision, split_by_group, typed_decisions_case_to_decisions
-from safedecide.schema import Decision, decisions_from_systemone_request
+from safedecide.schema import Decision, decisions_from_systemone_request, labelled_decisions_from_jsonl
 
 
 def test_decision_normalises_and_labels():
@@ -112,3 +112,35 @@ def test_parse_choice_top_only():
     d = Decision("x", "choice", "s", "q", ["a", "b", "c", "d"])
     p = parse_systemone_answer(d, {"choice": "c", "confidence": 0.7})
     assert p.argmax() == 2 and p.sum() == pytest.approx(1.0)
+
+
+def test_labelled_decisions_from_jsonl(tmp_path):
+    rows = [
+        {
+            "state": "s1",
+            "question": {
+                "type": "choice",
+                "instructions": "team?",
+                "criteria": {"billing": "money", "technical": "bugs"},
+            },
+            "answer": "technical",
+        },
+        {"state": "s1", "question": {"type": "noul", "instructions": "urgent."}, "answer": "yes"},
+        {
+            "id": "sev",
+            "state": "s2",
+            "question": {"type": "score", "instructions": "severity?", "criteria": ["none", "low", "high"]},
+            "answer": 2,
+        },
+    ]
+    path = tmp_path / "mine.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n\n", encoding="utf-8")
+    choice, noul, score = labelled_decisions_from_jsonl(str(path))
+    assert choice.options == ["billing", "technical"] and choice.label == 1
+    assert noul.kind == "noul" and noul.label == 1
+    assert score.id == "sev" and score.options == ["0", "1", "2"] and score.label == 2
+    assert choice.state == noul.state  # same case: stays on one side of every split
+
+    path.write_text(json.dumps({**rows[0], "answer": "sales"}) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not one of"):
+        labelled_decisions_from_jsonl(str(path))

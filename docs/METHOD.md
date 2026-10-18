@@ -151,6 +151,12 @@ validation carve also picked the checkpoint, which is fine because B is never
 seen before the threshold is set. Disjoint sets keep the guarantee valid (the
 temperatures are fixed before §2 sees B).
 
+On your own labelled decisions (`safedecide calibrate --data`), the checkpoint's
+saved temperatures are kept by default and the whole file is set B. The
+temperatures were fitted before that file was seen, so the guarantee is
+unaffected, and none of a small file is spent on them. `--refit-temperatures`
+restores the two-halves split.
+
 The release is the stage-2 model with the lowest validation NLL. Choosing it by
 automation on B would reuse the data behind its guarantee.
 

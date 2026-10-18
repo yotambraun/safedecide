@@ -2,7 +2,7 @@
 
 safedecide data        --profile clean
 safedecide train       --config configs/base.yaml
-safedecide calibrate   --model runs/base/best --alpha 0.05
+safedecide calibrate   --model yotambr/safedecide-140m --data my_decisions.jsonl
 safedecide benchmark   --model runs/base/best [--http URL] [--phocinae URL]
 safedecide export      --model runs/base/best
 safedecide card        --model runs/base/best --repo you/safedecide-140m --results results.json
@@ -57,13 +57,23 @@ def cmd_train(a):
 
 
 def cmd_calibrate(a):
-    from .data import load_profile
-    from .pipeline import calibrate_checkpoint, load_config
+    from .pipeline import calibrate_checkpoint
+    from .schema import labelled_decisions_from_jsonl
 
-    profile = load_config(a.model).get("profile", "clean")
-    cal = load_profile(profile, "calibration", max_rows=a.max_rows, seed=a.seed)
-    cfg = calibrate_checkpoint(a.model, cal, a.alpha, a.delta, seed=a.seed)
-    print(json.dumps({k: cfg[k] for k in ("temperatures", "selective_rule")}, indent=2))
+    if a.data:
+        cal = labelled_decisions_from_jsonl(a.data)
+    else:  # the calibration split of the model's own training data
+        from .data import load_profile
+        from .pipeline import load_config
+
+        profile = load_config(a.model).get("profile", "clean")
+        cal = load_profile(profile, "calibration", max_rows=a.max_rows, seed=a.seed)
+    keep = bool(a.data) and not a.refit_temperatures  # your file goes to the threshold in full
+    cfg = calibrate_checkpoint(
+        a.model, cal, a.alpha, a.delta, seed=a.seed, output_dir=a.output_dir, keep_temperatures=keep
+    )
+    print(json.dumps({k: cfg[k] for k in ("temperatures", "selective_rules")}, indent=2))
+    print(f"Calibrated copy: {cfg['path']}")
 
 
 def cmd_benchmark(a):
@@ -166,9 +176,16 @@ def main(argv=None) -> None:
     s.add_argument("--max-rows", type=int)
     s.set_defaults(fn=cmd_train)
 
-    s = sub.add_parser("calibrate")
-    s.add_argument("--model", required=True)
-    s.add_argument("--alpha", type=float, default=0.05)
+    s = sub.add_parser("calibrate", help="certify automate/escalate thresholds on labelled decisions")
+    s.add_argument("--model", required=True, help="local checkpoint or Hub repo id")
+    s.add_argument("--data", help="your labelled decisions, one JSON object per line (see README)")
+    s.add_argument("--output-dir", help="where a Hub model is downloaded and re-calibrated")
+    s.add_argument(
+        "--refit-temperatures",
+        action="store_true",
+        help="with --data: spend half of it refitting temperatures (default: keep the model's)",
+    )
+    s.add_argument("--alpha", type=float, default=0.1, help="default error level (5%%, 10%%, 20%% are all certified)")
     s.add_argument("--delta", type=float, default=0.1)
     s.add_argument("--max-rows", type=int, default=8000)
     s.add_argument("--seed", type=int, default=0)

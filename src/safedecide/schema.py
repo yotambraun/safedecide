@@ -131,3 +131,38 @@ def decisions_from_systemone_request(request: dict[str, Any]) -> list[Decision]:
             )
         )
     return out
+
+
+def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
+    """Read labelled decisions for calibration: one JSON object per line.
+
+    Each line holds one question in the ``/v1/systemone`` shape plus the right answer::
+
+        {"state": ..., "question": {"type", "instructions", "criteria"}, "answer": ...}
+
+    ``answer`` is an option name for ``choice``, ``true``/``false`` (or ``"yes"``/``"no"``)
+    for ``noul`` and the level index for ``score``. Questions sharing a ``state`` stay on
+    the same side of every calibration split.
+    """
+    import json
+
+    out: list[Decision] = []
+    with open(path, encoding="utf-8") as f:
+        for n, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            qid = str(row.get("id", f"line{n}"))
+            (d,) = decisions_from_systemone_request({"state": row["state"], "questions": {qid: row["question"]}})
+            answer = row["answer"]
+            if d.kind == "noul":
+                answer = "true" if str(answer).lower() in ("true", "yes", "1") else "false"
+            answer = str(answer)
+            if answer not in d.options:
+                raise ValueError(f"{path}:{n}: answer {row['answer']!r} is not one of {d.options}")
+            d.target = [1.0 if o == answer else 0.0 for o in d.options]
+            d.source = "jsonl"
+            out.append(d)
+    if not out:
+        raise ValueError(f"{path} holds no decisions")
+    return out

@@ -42,6 +42,7 @@ def calibrate_checkpoint(
     output_dir: str | None = None,
     temperature_set: Sequence[Decision] | None = None,
     alphas: Sequence[float] = (0.05, 0.10, 0.20),
+    keep_temperatures: bool = False,
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
     selective threshold on the other half (disjoint by case, so the guarantee is valid).
@@ -50,6 +51,11 @@ def calibrate_checkpoint(
     With ``temperature_set`` (labelled data disjoint from ``calibration_set``,
     e.g. the validation split) the temperatures are fitted there and the whole
     calibration set goes to the threshold.
+
+    With ``keep_temperatures`` the checkpoint's saved temperatures are kept and the
+    whole calibration set goes to the threshold. They were fitted before this data
+    was seen, so the guarantee stays valid, and with a few hundred labelled decisions
+    this certifies far more than halving the data.
 
     A rule is certified at every level in ``alphas`` (plus ``alpha``), each a
     separate guarantee; ``alpha`` is the default one. Pick the level from your
@@ -63,13 +69,18 @@ def calibrate_checkpoint(
         path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1])
     decider = SafeDecider.from_pretrained(path, full_precision=True)  # the precision users run on CPU
     cal = list(calibration_set)
-    if temperature_set is None:
-        temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # questions about one case stay together
+    if keep_temperatures:
+        if "temperatures" not in decider.config:
+            raise ValueError(f"{path} has no saved temperatures to keep")
+        temp_set, conf_set = [], cal
+        temps = dict(decider.temperatures)
     else:
-        temp_set, conf_set = list(temperature_set), cal
-
-    logits_t = decider.logits(temp_set)
-    temps = fit_temperatures(logits_t, [np.array(d.target) for d in temp_set], [d.kind for d in temp_set])
+        if temperature_set is None:
+            temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # one case stays on one side
+        else:
+            temp_set, conf_set = list(temperature_set), cal
+        logits_t = decider.logits(temp_set)
+        temps = fit_temperatures(logits_t, [np.array(d.target) for d in temp_set], [d.kind for d in temp_set])
 
     logits_c = decider.logits(conf_set)
     probs_c = [softmax_np(z, temps[d.kind]) for z, d in zip(logits_c, conf_set)]
@@ -88,6 +99,7 @@ def calibrate_checkpoint(
             "selective_rules": rules,
             "calibration": {
                 "n_temperature": len(temp_set),
+                "temperatures_kept": keep_temperatures,
                 "n_selective": len(conf_set),
                 "sources": dict(Counter(d.source or "unknown" for d in cal)),
             },

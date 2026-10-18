@@ -4,6 +4,7 @@ Covers: train -> save best -> calibrate -> decide -> benchmark -> ONNX export
 -> parity -> server. Slow-ish (~1 min on CPU); skip with -m "not e2e".
 """
 
+import json
 import random
 
 import numpy as np
@@ -98,7 +99,7 @@ def tiny(tmp_path_factory):
 @pytest.mark.e2e
 def test_full_pipeline(tiny, tmp_path):
     from safedecide.adapters import LocalAdapter
-    from safedecide.pipeline import benchmark, calibrate_checkpoint, shift_test
+    from safedecide.pipeline import benchmark, calibrate_checkpoint, load_config, shift_test
     from safedecide.predict import SafeDecider
     from safedecide.train import TrainConfig, train
 
@@ -130,6 +131,25 @@ def test_full_pipeline(tiny, tmp_path):
     assert config["calibration"]["n_temperature"] == len(val_set)
     assert config["calibration"]["n_selective"] == len(cal_set)
     assert [r["alpha"] for r in config["selective_rules"]] == [0.05, 0.1, 0.2]
+
+    # the same through the command line, on a JSONL file of the user's own labelled decisions
+    from safedecide.cli import main
+
+    lines = [
+        {
+            "state": d.state,
+            "question": {"type": "choice", "instructions": d.question, "criteria": {o: None for o in d.options}},
+            "answer": d.options[d.label],
+        }
+        for d in cal_set
+        if d.kind == "choice"
+    ]
+    mine = tmp_path / "mine.jsonl"
+    mine.write_text("\n".join(json.dumps(r) for r in lines), encoding="utf-8")
+    main(["calibrate", "--model", best, "--data", str(mine)])
+    calibration = load_config(best)["calibration"]
+    assert calibration["sources"] == {"jsonl": len(lines)}
+    assert calibration["temperatures_kept"] and calibration["n_selective"] == len(lines)  # all of it to the threshold
     assert config["selective_rule"]["alpha"] == 0.1
 
     decider = SafeDecider.from_pretrained(best, device="cpu")
