@@ -68,7 +68,7 @@ This is the only notebook that needs a paid GPU. Stage 1 trains a general model 
 jev-distill plus typed-decisions, with and without Conformal Training. Stage 2 fits it to
 typed-decisions alone, again with and without Conformal Training. Every model is calibrated
 and evaluated, and everything is saved to Google Drive. Export, model card and publishing run
-in `02_publish_cpu.ipynb` on a free CPU runtime.
+in `02_publish_cpu.ipynb` (a T4 for about 20 minutes, or CPU in about three hours).
 
 **Budget.** About 25 minutes per stage-1 run (two runs), 5 minutes per stage-2 run (three
 runs) and 15 minutes of setup and evaluation: roughly 80 minutes of GPU time. Set
@@ -368,16 +368,18 @@ if DISCONNECT_WHEN_DONE:
 )
 
 # --------------------------------------------------------------------------- #
-# 02: CPU (free). Baseline, figures, export, card, publish.
+# 02: T4 or CPU. Baseline, figures, export, card, publish.
 # --------------------------------------------------------------------------- #
 cpu: list = []
 md(
     cpu,
     """
-# SafeDecide 2/2: compare, export, publish (CPU, free)
+# SafeDecide 2/2: compare, export, publish
 
-Runs on a **CPU runtime** (*Runtime → Change runtime type → CPU*), so it costs no compute
-units. Reads what notebook 1 saved to Drive.
+Use a **T4 GPU** (*Runtime → Change runtime type → T4 GPU*): about 20 minutes. A CPU runtime
+works too but takes about three hours, because scoring the long typed-decisions inputs runs
+at about 2 option pairs per second on 2 CPU cores. Latency is measured on CPU either way.
+Reads what notebook 1 saved to Drive.
 
 Secrets needed: `GH_TOKEN` (while the repo is private) and `HF_TOKEN` (a Hugging Face
 token with *write* access; only for the publish step). Switch on *Notebook access* for both.
@@ -409,11 +411,12 @@ code(
 from safedecide.data import typed_decisions_splits
 from safedecide.pipeline import calibrate_checkpoint, shipped_rule_check
 
-# Runs from before multi-level rules: re-certify at 5/10/20% (same temperatures, a few minutes on CPU)
+# Runs from before multi-level rules: re-certify at 5/10/20% (same temperatures)
 cfg = json.load(open(f"{BEST_DIR}/safedecide_config.json"))
 if "selective_rules" not in cfg or cfg["selective_rule"]["alpha"] != TD_ALPHA:
     TD = typed_decisions_splits()
     cfg = calibrate_checkpoint(BEST_DIR, TD["calibration"], alpha=TD_ALPHA, delta=0.1, temperature_set=TD["validation"])
+if info["shipped_rule_on_typed_decisions_test"]["alpha"] != cfg["selective_rule"]["alpha"]:  # also after an interrupt
     info["shipped_rule_on_typed_decisions_test"] = shipped_rule_check(BEST_DIR, td_test)
     json.dump(info, open(f"{RES}/run_info.json", "w"), indent=1)
 print(json.dumps({"rules": cfg["selective_rules"], "shipped": info["shipped_rule_on_typed_decisions_test"]}, indent=1))
@@ -430,7 +433,7 @@ harness reproduces what the shipped weights are documented to score (0.9055 accu
 
 Its model card discloses that the shipped weights were trained with 500 of these 2,000 test
 decisions (gold targets included); its clean 0.791 comes from a retrained model that is not
-published. Its rows are therefore labelled *test-exposed*. About 10–15 minutes on CPU.
+published. Its rows are therefore labelled *test-exposed*. A few minutes on a T4, about an hour on CPU.
 """,
 )
 code(
@@ -444,7 +447,7 @@ from safedecide.typed_decisions import score_typed_decisions
 
 PUBLISHED_ACCURACY = 0.9055  # shipped weights, per the model's own engine and BENCHMARKS.md
 phoc_dir = snapshot_download("Phocinae/Phocinae-Largha-150M-v1", local_dir="/content/largha")
-phoc = PhocinaeAdapter.local(phoc_dir, device="cpu")
+phoc = PhocinaeAdapter.local(phoc_dir)  # GPU if there is one
 phoc.name = "Phocinae-Largha-150M-v1 (test-exposed)"
 phoc_probs = phoc.predict_proba(td_test)
 phoc_scores = score_typed_decisions(phoc_probs, td_test)

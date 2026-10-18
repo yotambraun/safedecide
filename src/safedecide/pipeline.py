@@ -61,7 +61,7 @@ def calibrate_checkpoint(
     """
     if not Path(path).is_dir():
         path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1])
-    decider = SafeDecider.from_pretrained(path)
+    decider = SafeDecider.from_pretrained(path, full_precision=True)  # the precision users run on CPU
     cal = list(calibration_set)
     if temperature_set is None:
         temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # questions about one case stay together
@@ -178,7 +178,7 @@ def shipped_rule_check(path: str, decisions: Sequence[Decision]) -> dict:
     """
     from .conformal import SelectiveRule
 
-    decider = SafeDecider.from_pretrained(path)
+    decider = SafeDecider.from_pretrained(path, full_precision=True)
     rule_d = decider.config.get("selective_rule")
     if not rule_d:
         raise ValueError(f"{path} is not calibrated; run calibrate_checkpoint first")

@@ -135,7 +135,7 @@ Two Colab notebooks reproduce every number:
 1. [`notebooks/01_train_gpu.ipynb`](https://github.com/yotambraun/safedecide/blob/main/notebooks/01_train_gpu.ipynb): two-stage
    training, calibration and evaluation, about 80 minutes on one A100.
 2. [`notebooks/02_publish_cpu.ipynb`](https://github.com/yotambraun/safedecide/blob/main/notebooks/02_publish_cpu.ipynb): baseline,
-   figures, ONNX export and model card, on a free CPU runtime.
+   figures, ONNX export and model card: about 20 minutes on a T4 (or about three hours on CPU).
 
 From a shell, the same steps are `safedecide train | calibrate | benchmark | export | card`
 (`safedecide --help`).

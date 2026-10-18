@@ -33,23 +33,24 @@ def resolve_model_dir(name_or_path: str, local_dir: str | None = None) -> str:
 
 
 class SafeDecider:
-    def __init__(self, model, tokenizer, config: dict[str, Any] | None = None, device=None):
+    def __init__(self, model, tokenizer, config: dict[str, Any] | None = None, device=None, full_precision=False):
         self.model = model
         self.tokenizer = tokenizer
         self.config = config or {}
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device).eval()
+        self.full_precision = full_precision  # no fp16/bf16 autocast on GPU: what calibration should see
         self.path: str | None = None
 
     # ------------------------------------------------------------------ io
     @classmethod
-    def from_pretrained(cls, name_or_path: str, device=None) -> SafeDecider:
+    def from_pretrained(cls, name_or_path: str, device=None, full_precision=False) -> SafeDecider:
         """Load a local checkpoint directory or a Hugging Face Hub repo id."""
         path = resolve_model_dir(name_or_path)
         tokenizer, model = load_backbone(path)
         cfg_path = Path(path) / CONFIG_NAME
         config = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-        decider = cls(model, tokenizer, config, device)
+        decider = cls(model, tokenizer, config, device, full_precision)
         decider.path = path
         return decider
 
@@ -89,7 +90,7 @@ class SafeDecider:
         """Raw per-option logits (ragged), in input order."""
         out: list[np.ndarray | None] = [None] * len(decisions)
         index = {id(d): i for i, d in enumerate(decisions)}
-        amp_dtype = autocast_dtype(self.device)
+        amp_dtype = None if self.full_precision else autocast_dtype(self.device)
         for batch in make_batches(decisions, max_pairs, shuffle=False):
             with torch.autocast("cuda", dtype=amp_dtype, enabled=amp_dtype is not None):
                 lg, _ = forward_decisions(self.model, self.tokenizer, batch, self.max_length, self.device)
