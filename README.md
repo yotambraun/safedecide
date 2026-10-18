@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/yotambraun/safedecide/actions/workflows/ci.yml/badge.svg)](https://github.com/yotambraun/safedecide/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/safedecide)](https://pypi.org/project/safedecide/)
-[![Downloads](https://static.pepy.tech/badge/safedecide)](https://pepy.tech/projects/safedecide)
+[![Downloads](https://img.shields.io/pepy/dt/safedecide)](https://pepy.tech/projects/safedecide)
 [![Python](https://img.shields.io/pypi/pyversions/safedecide)](https://pypi.org/project/safedecide/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/yotambraun/safedecide/blob/main/LICENSE)
 
