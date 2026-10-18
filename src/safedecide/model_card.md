@@ -1,6 +1,6 @@
 ---
 license: $license
-$license_extrabase_model: $base_model
+${license_extra}base_model: $base_model
 library_name: transformers
 pipeline_tag: text-classification
 language:

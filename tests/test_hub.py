@@ -1,4 +1,5 @@
 import json
+import re
 
 import huggingface_hub
 import pytest
@@ -44,6 +45,8 @@ def test_card_metadata_and_latency_table(model_dir):
     assert "license_name" not in card  # only for the research profile
     assert "| int8 | 141.5 MB | 27.0 ms" in card
     assert "the promise" in card
+    assert "\nbase_model: jhu-clsp/mmBERT-small\n" in card
+    assert not re.search(r"\$\{?[A-Za-z_]", card), "unfilled template placeholder"
     assert "| 5% | not certified | 0% (escalates everything) |" in card
     assert "| 10% (default) | 0.900 | 30.0% |" in card
 

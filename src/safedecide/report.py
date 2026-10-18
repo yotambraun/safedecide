@@ -15,6 +15,22 @@ TEXT_2 = "#52514e"
 GRID = "#e6e5e1"
 
 
+REFERENCE = ["#8a8883", "#b3b1ab"]
+
+
+def _colours(results: Sequence[dict]) -> list[str]:
+    """Reference rows in grey, every other model its own series colour, in order."""
+    out, ref, i = [], 0, 0
+    for r in results:
+        if "(reference)" in r["model"]:
+            out.append(REFERENCE[ref % len(REFERENCE)])
+            ref += 1
+        else:
+            out.append(SERIES[i % len(SERIES)])
+            i += 1
+    return out
+
+
 def _style(ax, title: str, xlabel: str, ylabel: str) -> None:
     ax.set_facecolor(SURFACE)
     ax.figure.set_facecolor(SURFACE)
@@ -73,28 +89,26 @@ def plot_risk_coverage(results: Sequence[dict], path: str, alpha: float = 0.05) 
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
 
-    fig, ax = plt.subplots(figsize=(7.5, 4.5), dpi=160)
-    for i, r in enumerate(results[: len(SERIES)]):
-        cov, err = r["risk_coverage"]["coverage"], r["risk_coverage"]["error"]
-        ax.plot(cov, err, color=SERIES[i], linewidth=2, label=r["model"])
-        ax.annotate(
-            r["model"],
-            (cov[-1], err[-1]),
-            xytext=(4, 0),
-            textcoords="offset points",
-            color=TEXT_2,
-            fontsize=8,
-            va="center",
-        )
+    top = max(4 * alpha, 0.3)  # reference rows leave the frame; the region near α is what matters
+    fig, ax = plt.subplots(figsize=(9, 4.5), dpi=160)
+    for r, colour in zip(results, _colours(results)):
+        cov, err = np.array(r["risk_coverage"]["coverage"]), np.array(r["risk_coverage"]["error"])
+        keep = cov >= 0.02  # below 2% the curve is the error of a handful of decisions
+        if err[keep].min() > top:
+            continue  # never inside the frame
+        ax.plot(cov[keep], err[keep], color=colour, linewidth=2, label=r["model"])
     ax.axhline(alpha, color=TEXT_2, linestyle="--", linewidth=1)
-    ax.text(0.01, alpha, f" error budget {alpha:.0%}", color=TEXT_2, fontsize=8, va="bottom")
+    ax.text(0.99, alpha, f"error budget {alpha:.0%} ", color=TEXT_2, fontsize=8, va="bottom", ha="right")
     _style(
         ax, "How much can each model decide alone?", "Share of decisions automated", "Error among automated decisions"
     )
-    ax.set_xlim(0, 1.1)
-    ax.set_ylim(0, None)
-    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT)
+    ax.set_xlim(0, 1.0)
+    ax.set_ylim(0, top)
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+    ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
+    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT, loc="upper left", bbox_to_anchor=(1.01, 1))
     fig.tight_layout()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, facecolor=SURFACE)
@@ -104,19 +118,22 @@ def plot_risk_coverage(results: Sequence[dict], path: str, alpha: float = 0.05) 
 
 def plot_automation(results: Sequence[dict], path: str, alpha: float = 0.05) -> str:
     import matplotlib
+    import matplotlib.ticker
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     key = f"alpha={alpha}"
+    colour = dict(zip((r["model"] for r in results), _colours(results)))
     rs = sorted(results, key=lambda r: r["automation"][key]["automation_rate_mean"])
     vals = [r["automation"][key]["automation_rate_mean"] for r in rs]
-    fig, ax = plt.subplots(figsize=(7.5, 0.55 * len(rs) + 1.2), dpi=160)
-    ax.barh([r["model"] for r in rs], vals, color=SERIES[0], height=0.55)
+    fig, ax = plt.subplots(figsize=(8, 0.55 * len(rs) + 1.2), dpi=160)
+    ax.barh([r["model"] for r in rs], vals, color=[colour[r["model"]] for r in rs], height=0.55)
     for y, v in enumerate(vals):
         ax.text(v + 0.01, y, f"{v:.0%}", va="center", color=TEXT, fontsize=9)
-    _style(ax, f"Decisions automated with a guaranteed error ≤ {alpha:.0%}", "Share of decisions", "")
-    ax.set_xlim(0, 1.0)
+    _style(ax, f"Automated with a guaranteed error ≤ {alpha:.0%}", "Share of decisions", "")
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+    ax.set_xlim(0, 1.05)
     ax.grid(axis="y", visible=False)
     fig.tight_layout()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -157,20 +174,20 @@ def plot_automation_vs_alpha(results: Sequence[dict], path: str) -> str:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(7.5, 4.5), dpi=160)
-    for i, r in enumerate(results[: len(SERIES)]):
+    fig, ax = plt.subplots(figsize=(9, 4.5), dpi=160)
+    for r, colour in zip(results, _colours(results)):
         alphas = sorted(float(k.split("=")[1]) for k in r["automation"])
         mean = np.array([r["automation"][f"alpha={a}"]["automation_rate_mean"] for a in alphas])
         std = np.array([r["automation"][f"alpha={a}"]["automation_rate_std"] for a in alphas])
-        ax.plot(alphas, mean, color=SERIES[i], linewidth=2, marker="o", markersize=4, label=r["model"])
-        ax.fill_between(alphas, mean - std, mean + std, color=SERIES[i], alpha=0.15, linewidth=0)
+        ax.plot(alphas, mean, color=colour, linewidth=2, marker="o", markersize=4, label=r["model"])
+        ax.fill_between(alphas, mean - std, mean + std, color=colour, alpha=0.15, linewidth=0)
     _style(ax, "Decisions automated at a guaranteed error budget", "Error budget α", "Share of decisions automated")
     all_alphas = sorted({float(k.split("=")[1]) for r in results for k in r["automation"]})
     ax.set_xticks(all_alphas)
     ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
     ax.set_ylim(0, 1)
-    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT)
+    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT, loc="upper left", bbox_to_anchor=(1.01, 1))
     fig.tight_layout()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, facecolor=SURFACE)
@@ -188,17 +205,29 @@ def plot_validity(results: Sequence[dict], path: str, alpha: float = 0.05) -> st
     import matplotlib.pyplot as plt
 
     key = f"alpha={alpha}"
-    fig, ax = plt.subplots(figsize=(7.5, 4.0), dpi=160)
-    errs_all = [np.array(r["automation"][key]["per_split"]["selective_error"]) for r in results]
-    hi = max(alpha * 1.6, max((e.max() for e in errs_all if len(e)), default=alpha))
+    fig, ax = plt.subplots(figsize=(9, 4.0), dpi=160)
+    shown = []
+    for r, colour in zip(results, _colours(results)):
+        split = r["automation"][key]["per_split"]
+        # a split that automates nothing has no error to show
+        errs = np.array([e for e, a in zip(split["selective_error"], split["automation_rate"]) if a > 0])
+        if len(errs):
+            shown.append((colour, f"{r['model']} ({len(errs)} splits)", errs))
+    hi = max([alpha * 1.4] + [e.max() for _, _, e in shown])
     bins = np.linspace(0, hi, 30)
-    for i, (r, errs) in enumerate(zip(results[: len(SERIES)], errs_all)):
-        ax.hist(errs, bins=bins, color=SERIES[i], alpha=0.55, label=r["model"])
+    for colour, label, errs in shown:
+        ax.hist(errs, bins=bins, color=colour, histtype="step", linewidth=2, label=label)
     ax.axvline(alpha, color=TEXT, linestyle="--", linewidth=1)
     ax.text(alpha, ax.get_ylim()[1] * 0.95, f"  α = {alpha:.0%}", color=TEXT, fontsize=8, va="top")
-    _style(ax, "Realised error on held-out data, per random split", "Error among automated decisions", "Splits")
-    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=1))
-    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT)
+    _style(
+        ax,
+        "Realised error on held-out data, per random split",
+        "Error among automated decisions (splits that automated something)",
+        "Splits",
+    )
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
+    ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+    ax.legend(frameon=False, fontsize=8, labelcolor=TEXT, loc="upper left", bbox_to_anchor=(1.01, 1))
     fig.tight_layout()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, facecolor=SURFACE)

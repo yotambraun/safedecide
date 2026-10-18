@@ -68,7 +68,7 @@ This is the only notebook that needs a paid GPU. Stage 1 trains a general model 
 jev-distill plus typed-decisions, with and without Conformal Training. Stage 2 fits it to
 typed-decisions alone, again with and without Conformal Training. Every model is calibrated
 and evaluated, and everything is saved to Google Drive. Export, model card and publishing run
-in `02_publish_cpu.ipynb` (a T4 for about 20 minutes, or CPU in about three hours).
+in `02_publish.ipynb` (a T4 for about 20 minutes, or CPU in about three hours).
 
 **Budget.** About 25 minutes per stage-1 run (two runs), 5 minutes per stage-2 run (three
 runs) and 15 minutes of setup and evaluation: roughly 80 minutes of GPU time. Set
@@ -94,6 +94,9 @@ import time
 from pathlib import Path
 
 import torch
+from transformers.utils import logging as hf_logging
+
+hf_logging.disable_progress_bar()  # one "Loading weights" bar per model load buries the output
 
 PROFILE = "clean"          # "clean" -> Apache-2.0 release. "research" adds Jev-labelled rows -> non-commercial.
 ALPHA, DELTA = 0.05, 0.10  # error budget on automated decisions; 1 - DELTA = confidence in that promise
@@ -368,82 +371,123 @@ if DISCONNECT_WHEN_DONE:
 )
 
 # --------------------------------------------------------------------------- #
-# 02: T4 or CPU. Baseline, figures, export, card, publish.
+# 02: T4 (or CPU). Certify, compare, export, card, publish.
 # --------------------------------------------------------------------------- #
-cpu: list = []
+pub: list = []
 md(
-    cpu,
+    pub,
     """
-# SafeDecide 2/2: compare, export, publish
+# SafeDecide 2/2: compare, export and publish
 
-Use a **T4 GPU** (*Runtime → Change runtime type → T4 GPU*): about 20 minutes. A CPU runtime
-works too but takes about three hours, because scoring the long typed-decisions inputs runs
-at about 2 option pairs per second on 2 CPU cores. Latency is measured on CPU either way.
-Reads what notebook 1 saved to Drive.
+Turns the models and results that notebook 1 saved to Google Drive into a release:
 
-Secrets needed: `GH_TOKEN` (while the repo is private) and `HF_TOKEN` (a Hugging Face
-token with *write* access; only for the publish step). Switch on *Notebook access* for both.
+1. **Certify** the release model at 5%, 10% and 20% error.
+2. **Baseline**: score Phocinae-Largha-150M-v1 with its own engine.
+3. **Results**: leaderboard tables and figures.
+4. **Automation board**: every model Hugging Face scored on typed-decisions, under one calibration.
+5. **Export** to ONNX (fp32 and int8) and measure CPU latency.
+6. **Model card**, rendered from the files above.
+7. **Publish** to the Hugging Face Hub, private until launch.
+
+**Runtime:** T4 GPU, about 20 minutes. A CPU runtime works but takes about three hours: on two
+cores the long typed-decisions inputs score at about 2 option pairs per second. Latency is
+measured on CPU either way.
+
+**Secrets** (🔑 panel, *Notebook access* on): `GH_TOKEN` while the GitHub repo is private, and
+`HF_TOKEN` with *write* access for the publish step.
 """,
 )
-code(cpu, SETUP + '%pip install -q "/content/safedecide[all]" "phocinae-server==0.1.7"\n%cd /content/safedecide\n')
+md(pub, "## 0. Setup")
+code(pub, SETUP + '%pip install -q "/content/safedecide[all]" "phocinae-server==0.1.7"\n%cd /content/safedecide\n')
 code(
-    cpu,
+    pub,
     """
 import json
+import sys
 
 from IPython.display import Image, Markdown, display
+from transformers.utils import logging as hf_logging
 
 from safedecide.data import load_typed_decisions
 
+hf_logging.disable_progress_bar()  # one "Loading weights" bar per model load buries the output
+
+ALPHA, TD_ALPHA, DELTA = 0.05, 0.10, 0.10  # jev-distill level, typed-decisions release default, 1 - confidence
 RES = f"{OUT}/results"
 info = json.load(open(f"{RES}/run_info.json"))
 BEST_DIR = info["release"]
 td_test = load_typed_decisions("test")
 td_scores = json.load(open(f"{RES}/typed_decisions_official.json"))
 results = {p: json.load(open(f"{RES}/{p}.json")) for p in ("typed_decisions_test", "jev_test_30k", "jev_ood")}
-ALPHA, TD_ALPHA = 0.05, 0.10
-print("Release candidate:", BEST_DIR)
-""",
-)
-code(
-    cpu,
-    """
-from safedecide.data import typed_decisions_splits
-from safedecide.pipeline import calibrate_checkpoint, shipped_rule_check
-
-# Runs from before multi-level rules: re-certify at 5/10/20% (same temperatures)
-cfg = json.load(open(f"{BEST_DIR}/safedecide_config.json"))
-if "selective_rules" not in cfg or cfg["selective_rule"]["alpha"] != TD_ALPHA:
-    TD = typed_decisions_splits()
-    cfg = calibrate_checkpoint(BEST_DIR, TD["calibration"], alpha=TD_ALPHA, delta=0.1, temperature_set=TD["validation"])
-if info["shipped_rule_on_typed_decisions_test"]["alpha"] != cfg["selective_rule"]["alpha"]:  # also after an interrupt
-    info["shipped_rule_on_typed_decisions_test"] = shipped_rule_check(BEST_DIR, td_test)
-    json.dump(info, open(f"{RES}/run_info.json", "w"), indent=1)
-print(json.dumps({"rules": cfg["selective_rules"], "shipped": info["shipped_rule_on_typed_decisions_test"]}, indent=1))
+print(f"Release model: {info['release_name']} ({BEST_DIR})")
 """,
 )
 md(
-    cpu,
+    pub,
     """
-## Baseline: Phocinae-Largha-150M-v1 (same mmBERT-small base)
+## 1. Certify the release model
 
-Called in-process, the way its own typed-decisions harness does it (the HTTP server drops each
-question's instructions and criteria). Before its numbers go anywhere, the cell checks that this
-harness reproduces what the shipped weights are documented to score (0.9055 accuracy, ECE 0.2519).
-
-Its model card discloses that the shipped weights were trained with 500 of these 2,000 test
-decisions (gold targets included); its clean 0.791 comes from a retrained model that is not
-published. Its rows are therefore labelled *test-exposed*. A few minutes on a T4, about an hour on CPU.
+One temperature per question type is fitted on the typed-decisions validation carve. A threshold
+is then certified at each error level on the 600-decision calibration carve (exact
+Clopper–Pearson bounds, fixed-sequence testing, δ = 10%), and the default one is applied,
+unchanged, to the 2,000 test decisions. Skipped when the checkpoint on Drive is already certified.
 """,
 )
 code(
-    cpu,
+    pub,
     """
+from safedecide.data import typed_decisions_splits
+from safedecide.hub import rules_table
+from safedecide.pipeline import calibrate_checkpoint, shipped_rule_check
+
+cfg = json.load(open(f"{BEST_DIR}/safedecide_config.json"))
+if "selective_rules" not in cfg or cfg["selective_rule"]["alpha"] != TD_ALPHA:
+    TD = typed_decisions_splits()
+    cfg = calibrate_checkpoint(BEST_DIR, TD["calibration"], alpha=TD_ALPHA, delta=DELTA,
+                               temperature_set=TD["validation"])
+shipped = info["shipped_rule_on_typed_decisions_test"]
+if shipped["alpha"] != cfg["selective_rule"]["alpha"]:  # also catches a run interrupted after calibration
+    shipped = info["shipped_rule_on_typed_decisions_test"] = shipped_rule_check(BEST_DIR, td_test)
+    json.dump(info, open(f"{RES}/run_info.json", "w"), indent=1)
+
+display(Markdown(rules_table(cfg["selective_rules"], cfg["selective_rule"]["alpha"])))
+display(Markdown(
+    f"**Default threshold on typed-decisions test:** {shipped['automation_rate']:.1%} of "
+    f"{shipped['n']:,} decisions automated, {shipped['selective_error']:.1%} of those wrong "
+    f"(budget {shipped['alpha']:.0%})."
+))
+""",
+)
+md(
+    pub,
+    """
+## 2. Baseline: Phocinae-Largha-150M-v1
+
+Same mmBERT-small base. Called in-process, the way its own typed-decisions harness does it (its
+HTTP server drops each question's instructions and criteria). Its numbers are used only if this
+harness reproduces the published accuracy of the shipped weights (0.9055) within one point.
+
+Its model card discloses that the shipped weights were trained with 500 of these 2,000 test
+decisions, gold targets included; its clean 0.791 comes from a retrained model that is not
+published. Its rows are therefore labelled *test-exposed*.
+""",
+)
+code(
+    pub,
+    """
+import logging
+import warnings
+
+import torch
 from huggingface_hub import snapshot_download
 
 from safedecide.adapters import PhocinaeAdapter
 from safedecide.pipeline import benchmark, save_predictions
 from safedecide.typed_decisions import score_typed_decisions
+
+# Phocinae compiles its model on GPU; the compiler's notes about that are not errors
+torch._logging.set_logs(inductor=logging.ERROR)
+warnings.filterwarnings("ignore", module="torch._inductor")
 
 PUBLISHED_ACCURACY = 0.9055  # shipped weights, per the model's own engine and BENCHMARKS.md
 phoc_dir = snapshot_download("Phocinae/Phocinae-Largha-150M-v1", local_dir="/content/largha")
@@ -453,18 +497,27 @@ phoc_probs = phoc.predict_proba(td_test)
 phoc_scores = score_typed_decisions(phoc_probs, td_test)
 acc = phoc_scores["overall"]["accuracy"]
 REPRODUCED = abs(acc - PUBLISHED_ACCURACY) <= 0.01
-print(f"Phocinae accuracy {acc:.4f} vs published {PUBLISHED_ACCURACY} -> reproduced: {REPRODUCED}")
 if REPRODUCED:
     td_scores[phoc.name] = phoc_scores
     save_predictions(RES, "typed_decisions_test", phoc.name, td_test, phoc_probs)
     results["typed_decisions_test"].append(benchmark(phoc, td_test, probs=phoc_probs))
-else:
-    print("Not reproduced: leave Phocinae out of every table and figure until the gap is understood.")
+verdict = "reproduced" if REPRODUCED else "**not reproduced**: left out of every table and figure"
+display(Markdown(f"**Phocinae accuracy:** {acc:.4f} (published {PUBLISHED_ACCURACY}), {verdict}."))
 """,
 )
-md(cpu, "## Tables and figures")
+md(
+    pub,
+    """
+## 3. Results
+
+Automation numbers are means over 100 random calibration/test splits by case; brackets are 95%
+bootstrap intervals over cases. typed-decisions is shown at 10% error (the release default),
+jev-distill at 5%. The stage-1 ("general") models stay in the tables and are left out of the
+figures.
+""",
+)
 code(
-    cpu,
+    pub,
     """
 from safedecide.pipeline import save_results
 from safedecide.report import (
@@ -478,11 +531,11 @@ from safedecide.typed_decisions import markdown_table as td_table
 
 json.dump(td_scores, open(f"{RES}/typed_decisions_official.json", "w"), indent=1)
 save_results(results["typed_decisions_test"], f"{RES}/typed_decisions_test.json")
-md_parts = ["## typed-decisions (test, 2,000 decisions)\\n\\n" + td_table(td_scores)]
+md_parts = ["### typed-decisions test: official metrics (2,000 decisions)\\n\\n" + td_table(td_scores)]
 for pool, res in results.items():
     a = TD_ALPHA if pool == "typed_decisions_test" else ALPHA
-    md_parts.append(f"## {pool}: Automation @ {a:.0%}\\n\\n" + markdown_table(res, a))
-    shown = [r for r in res if not r["model"].startswith("SafeDecide general")]  # stage 1 stays in the tables
+    md_parts.append(f"### {pool}: automation at a guaranteed error ≤ {a:.0%}\\n\\n" + markdown_table(res, a))
+    shown = [r for r in res if not r["model"].startswith("SafeDecide general")]
     plot_automation_vs_alpha(shown, f"{RES}/{pool}_automation_vs_alpha.png")
     plot_risk_coverage(shown, f"{RES}/{pool}_risk_coverage.png", a)
     plot_automation(shown, f"{RES}/{pool}_automation.png", a)
@@ -490,44 +543,74 @@ for pool, res in results.items():
 leaderboard = "\\n\\n".join(md_parts)
 open(f"{RES}/leaderboard.md", "w").write(leaderboard)
 display(Markdown(leaderboard))
+""",
+)
+code(
+    pub,
+    """
 for f in ("automation_vs_alpha", "validity", "risk_coverage"):
-    display(Image(f"{RES}/typed_decisions_test_{f}.png"))
+    display(Image(f"{RES}/typed_decisions_test_{f}.png", width=900))
 """,
 )
 md(
-    cpu,
+    pub,
     """
-## Automation board: every model Hugging Face scored on typed-decisions
+## 4. Automation board
 
 Hugging Face published per-decision results for the models it scored on typed-decisions test
-(public bucket `SaylorTwift/typed-decisions-evals`). The script applies our calibration to
-their confidences and ours, with the same correctness rule and splits for every row. Rows are
-labelled by how each model was trained: zero-shot, fitted on train, or test-exposed.
+(public bucket `SaylorTwift/typed-decisions-evals`). The same calibration, correctness rule
+(a tie in the gold counts as correct, as in that scorer) and case splits are applied to every
+row, ours included. Rows are labelled by how each model was trained: zero-shot, fitted on
+train, or test-exposed.
 """,
 )
 code(
-    cpu,
+    pub,
     """
-!python scripts/automation_board.py --predictions {RES}/predictions/typed_decisions_test --out {RES}/automation_board
-display(Image(f"{RES}/automation_board.png"))
+import subprocess
+
+board = f"{RES}/automation_board"
+r = subprocess.run([sys.executable, "scripts/automation_board.py",
+                    "--predictions", f"{RES}/predictions/typed_decisions_test", "--out", board],
+                   capture_output=True, text=True)
+if r.returncode:
+    raise RuntimeError(r.stderr)
+display(Markdown(open(f"{board}.md").read()))
+display(Image(f"{board}.png", width=900))
 """,
 )
-md(cpu, "## Export ONNX (fp32 + int8), parity, CPU latency")
+md(
+    pub,
+    """
+## 5. Export to ONNX and measure CPU latency
+
+fp32 and int8 exports, each checked against PyTorch on the same inputs, then timed with
+onnxruntime on one CPU thread.
+""",
+)
 code(
-    cpu,
+    pub,
     """
 from safedecide.export import check_parity, cpu_latency, export_onnx
+from safedecide.hub import latency_table
 
 paths = export_onnx(BEST_DIR)
 latency = {"max_abs_logit_diff": {k: check_parity(BEST_DIR, p) for k, p in paths.items()},
            "latency": {k: cpu_latency(BEST_DIR, p) for k, p in paths.items()}}
 json.dump(latency, open(f"{BEST_DIR}/latency.json", "w"), indent=1)
-latency
+display(Markdown(latency_table(latency)))
 """,
 )
-md(cpu, "## Model card\n\nRead it in full. Every number must come from the files above.")
+md(
+    pub,
+    """
+## 6. Model card
+
+Rendered from the files above. Read it in full before publishing.
+""",
+)
 code(
-    cpu,
+    pub,
     """
 import datetime
 
@@ -543,10 +626,9 @@ card = render_model_card(BEST_DIR, MODEL_REPO, results["typed_decisions_test"],
                          ablation_md=open(f"{RES}/ablation.md").read(),
                          shift=json.load(open(f"{RES}/shift.json")), latency=latency, alpha=TD_ALPHA,
                          results_repo=RESULTS_REPO)
-release_name = info["release_name"]
 eval_yaml = eval_results_yaml(
-    td_scores[release_name], source_url=f"https://huggingface.co/datasets/{RESULTS_REPO}", user=HF_USER,
-    date=str(datetime.date.today()),
+    td_scores[info["release_name"]], source_url=f"https://huggingface.co/datasets/{RESULTS_REPO}",
+    user=HF_USER, date=str(datetime.date.today()),
     notes="Fitted on the typed-decisions train split (carved by case into train/validation/calibration); "
           "never trained or calibrated on test. One forward pass per option. ECE: 15 equal-width bins.")
 os.makedirs(f"{BEST_DIR}/.eval_results", exist_ok=True)
@@ -555,17 +637,17 @@ display(Markdown(card))
 """,
 )
 md(
-    cpu,
+    pub,
     """
-## Publish
+## 7. Publish
 
 Creates the model repo (weights, ONNX, card, eval results), the results dataset (raw
-predictions) and the demo Space, all **private**. Make them public on launch day from each
-repo's settings. Leave `PUBLISH = False` until you have read the card.
+predictions) and the demo Space, all **private**; make them public on launch day from each
+repo's settings. After reading the card, set `PUBLISH = True` and run this cell alone.
 """,
 )
 code(
-    cpu,
+    pub,
     """
 PUBLISH = False
 PRIVATE = True
@@ -577,6 +659,7 @@ if PUBLISH:
 
     assets = {f"assets/{f}.png": f"{RES}/typed_decisions_test_{f}.png"
               for f in ("automation_vs_alpha", "validity", "risk_coverage")}
+    assets["assets/automation_board.png"] = f"{board}.png"
     print(push_model(BEST_DIR, MODEL_REPO, card, private=PRIVATE, extra_files=assets))
     print(push_results_dataset(RES, RESULTS_REPO, MODEL_REPO, private=PRIVATE))
 
@@ -585,15 +668,19 @@ if PUBLISH:
     api.add_space_variable(SPACE_REPO, "MODEL_REPO", MODEL_REPO)
     api.upload_folder(repo_id=SPACE_REPO, repo_type="space", folder_path="space", commit_message="Upload demo")
     print(f"https://huggingface.co/spaces/{SPACE_REPO}")
+else:
+    print("Nothing uploaded. Read the card above, then set PUBLISH = True and run this cell.")
 """,
 )
 md(
-    cpu,
+    pub,
     """
-## Copy the results into the GitHub repo
+## 8. Finish
 
-Download `MyDrive/safedecide/results/*.md` and `*.png` into the repo's `results/` folder,
-put the numbers into the README results table, and commit. The raw predictions stay on the Hub.
+1. **Runtime → Disconnect and delete runtime.** This notebook leaves the runtime connected so
+   you can publish after reading the card; a connected T4 keeps using compute units.
+2. Copy `MyDrive/safedecide/results/*.md` and `*.png` into the repo's `results/` folder and
+   fill in the README results table. The raw predictions stay on the Hub.
 """,
 )
 
@@ -615,7 +702,7 @@ def write(cells, name, gpu_type=None):
 
 
 write(gpu, "01_train_gpu.ipynb", gpu_type="A100")
-write(cpu, "02_publish_cpu.ipynb")
+write(pub, "02_publish.ipynb", gpu_type="T4")
 
 # Same formatting as the rest of the repo (ruff formats notebook cells too).
 subprocess.run([sys.executable, "-m", "ruff", "format", "-q", str(ROOT / "notebooks")], check=True)

@@ -11,7 +11,8 @@ from .data import PROFILE_LICENSE
 from .report import markdown_table
 
 
-def _rules_table(rules: list[dict], default_alpha: float | None) -> str:
+def rules_table(rules: list[dict], default_alpha: float | None) -> str:
+    """Markdown table of the certified error levels saved with a checkpoint."""
     lines = ["| Error level α | Threshold | Automated on the calibration carve |", "|---|---|---|"]
     for r in rules:
         level = f"{r['alpha']:.0%}" + (" (default)" if r["alpha"] == default_alpha else "")
@@ -20,6 +21,24 @@ def _rules_table(rules: list[dict], default_alpha: float | None) -> str:
         else:
             lines.append(f"| {level} | {r['threshold']:.3f} | {r['calibration_automation']:.1%} |")
     return "\n".join(lines)
+
+
+def latency_table(latency: dict) -> str:
+    """Markdown summary of ``export.cpu_latency`` and ``export.check_parity`` results."""
+    lines = ["| Precision | Size | p50 | p90 | Max logit diff vs PyTorch |", "|---|---|---|---|---|"]
+    for k, lat in latency["latency"].items():
+        lines.append(
+            f"| {k} | {lat['file_mb']} MB | {lat['p50_ms']:.1f} ms | {lat['p90_ms']:.1f} ms | "
+            f"{latency['max_abs_logit_diff'][k]:.2g} |"
+        )
+    first = next(iter(latency["latency"].values()))
+    return (
+        f"onnxruntime on {first['threads']} CPU thread, one {first['n_options']}-option decision.\n\n"
+        + "\n".join(lines)
+        + "\n\nThe guarantee is calibrated on the full-precision model (PyTorch or fp32 ONNX). "
+        "int8 is faster but shifts the probabilities slightly, so its automate/escalate flags are "
+        "not covered unless you re-calibrate it."
+    )
 
 
 def render_model_card(
@@ -34,7 +53,7 @@ def render_model_card(
 ) -> str:
     cfg = json.loads(Path(model_dir, "safedecide_config.json").read_text(encoding="utf-8"))
     rule = cfg.get("selective_rule", {})
-    rules_md = _rules_table(cfg.get("selective_rules") or ([rule] if rule else []), rule.get("alpha"))
+    rules_md = rules_table(cfg.get("selective_rules") or ([rule] if rule else []), rule.get("alpha"))
     profile = cfg.get("profile", "clean")
     template = Template(resources.files("safedecide").joinpath("model_card.md").read_text(encoding="utf-8"))
     shift_md = "Not measured."
@@ -45,22 +64,7 @@ def render_model_card(
             f"In-distribution: {s_in['automation_rate']:.1%} automated, {s_in['selective_error']:.2%} error. "
             f"Shifted (OOD split): {s_sh['automation_rate']:.1%} automated, **{s_sh['selective_error']:.2%} error**."
         )
-    lat_md = "Not measured."
-    if latency:
-        lines = ["| Precision | Size | p50 | p90 | Max logit diff vs PyTorch |", "|---|---|---|---|---|"]
-        for k, lat in latency["latency"].items():
-            lines.append(
-                f"| {k} | {lat['file_mb']} MB | {lat['p50_ms']:.1f} ms | {lat['p90_ms']:.1f} ms | "
-                f"{latency['max_abs_logit_diff'][k]:.2g} |"
-            )
-        first = next(iter(latency["latency"].values()))
-        lat_md = (
-            f"onnxruntime on {first['threads']} CPU thread, one {first['n_options']}-option decision.\n\n"
-            + "\n".join(lines)
-            + "\n\nThe guarantee is calibrated on the full-precision model (PyTorch or fp32 ONNX). "
-            "int8 is faster but shifts the probabilities slightly, so its automate/escalate flags are "
-            "not covered unless you re-calibrate it."
-        )
+    lat_md = latency_table(latency) if latency else "Not measured."
     return template.safe_substitute(
         repo_id=repo_id,
         results_repo=results_repo or f"{repo_id}-results",
