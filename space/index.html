@@ -125,7 +125,10 @@ button {
 .pane { background: var(--panel); border: 1px solid var(--rule); border-radius: 16px; padding: 22px; min-width: 0; }
 .pane h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; color: var(--muted); }
 
-.examples { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+.examples { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.scope { font-size: 13px; color: var(--muted); margin: 0 0 6px; max-width: 64ch; }
+.gold { font-size: 14px; margin: 8px 0 0; color: var(--muted); min-height: 1.4em; max-width: 60ch; }
+.gold strong { color: var(--ink); }
 .chip { background: var(--soft); color: var(--ink); border: 1px solid var(--rule); border-radius: 99px; padding: 6px 13px; font-weight: 550; font-size: 14px; }
 .chip[aria-pressed="true"] { border-color: var(--ink); }
 
@@ -255,8 +258,11 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
       <form class="pane" id="form" autocomplete="off">
         <h2>Your decision</h2>
         <div class="examples" role="group" aria-label="Examples" id="examples"></div>
+        <p class="scope">These are held-out cases from typed-decisions, the benchmark the line was certified on:
+          agent traces, customer service, invoices and security alerts, with JSON states and described options.
+          Inputs unlike these are outside the guarantee, so re-calibrate on your own labelled data before relying on the flag.</p>
 
-        <label class="field" for="state">State <span>(a ticket, a log, an agent step, any text or JSON)</span></label>
+        <label class="field" for="state">State <span>(the case as JSON, as in the benchmark)</span></label>
         <textarea id="state" rows="5" required></textarea>
 
         <label class="field" for="question">Question</label>
@@ -282,6 +288,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
         <h2 id="result-title">Decision</h2>
         <div class="verdict idle" id="verdict" aria-live="polite"><b>Waiting</b><span class="what">Run a decision to see where it lands.</span></div>
         <p class="answer" id="answer"></p>
+        <p class="gold" id="gold"></p>
 
         <div class="gate" aria-hidden="true">
           <div class="track"><div class="ok" id="ok"></div></div>
@@ -348,52 +355,78 @@ const fileUrl = (name) => (LOCAL ? `./${MODEL}/${name}` : `https://huggingface.c
 const $ = (id) => document.getElementById(id);
 const pct = (x, d = 0) => `${(100 * x).toFixed(d)}%`;
 
+// Held-out typed-decisions test cases (never used for training or calibration), with the benchmark's gold answer.
 const EXAMPLES = [
   {
-    label: "Ticket routing", kind: "choice",
-    state: "I was charged twice for the same subscription this month and support hasn't answered my last two emails.",
-    question: "Which team should handle this ticket?",
-    options: "billing: payments, invoices, refunds\ntechnical: bugs, outages, errors\naccount: login, access, profile",
+    "label": "Customer ticket",
+    "id": "customer_service_000047:category",
+    "kind": "choice",
+    "state": "{\"account\": {\"lifetime_value_usd\": 228, \"prior_tickets_90d\": 0, \"seats\": 1, \"tenure_months\": 3, \"tier\": \"standard\"}, \"thread\": [{\"role\": \"customer\", \"text\": \"My payment didn’t go through, and I’m now locked out of my account.\"}]}",
+    "question": "What is this customer conversation primarily about?",
+    "options": "account: Login, plan changes, profile or access management.\nbilling: A charge, invoice, subscription or payment problem.\ndelivery: Shipping, fulfilment or delivery of a physical item.\nrefund: The customer is explicitly asking for money back.\ntechnical: The product or service is not working as expected.",
+    "gold": "billing"
   },
   {
-    label: "Agent action", kind: "noul",
-    state: "The agent wants to run `rm -rf /var/data` on the production host to free disk space before tonight's backup.",
-    question: "Should this action be allowed without human approval?",
-    options: "",
+    "label": "Agent trace",
+    "id": "agent_trace_observability_000091:needs_review",
+    "kind": "noul",
+    "state": "{\"agent\": {\"autonomy\": \"unsupervised\", \"model\": \"internal-agent-v2\"}, \"constraints\": [\"Do not force-push to any branch\"], \"task\": \"Update every service to the patched logging library.\", \"trace_summary\": {\"constraint_violations\": 1, \"duration_s\": 799.0, \"irreversible_actions\": 1, \"steps\": 10, \"tool_errors\": 0}}",
+    "question": "This trace requires human review.",
+    "options": "no: No human attention is warranted.\nyes: A human should inspect this run.",
+    "gold": "true"
   },
   {
-    label: "Incident severity", kind: "score",
-    state: "Checkout API p99 latency jumped from 300 ms to 8.4 s after the 14:02 deploy. Error rate is 2%. The TLS certificate expires in 40 minutes.",
-    question: "How severe is this incident?",
-    options: "no impact\nminor\ndegraded\nmajor\ncritical",
+    "label": "Vendor invoice",
+    "id": "invoice_processing_000030:disposition",
+    "kind": "choice",
+    "state": "{\"delivery\": {\"condition\": \"accepted\", \"date\": \"2026-03-18\", \"received_qty\": 250}, \"invoice\": {\"currency\": \"USD\", \"id\": \"INV-2026-4388\", \"lines\": [{\"qty\": 250, \"sku\": \"SKU-517\", \"total_usd\": 9410.0, \"unit_usd\": 37.64}], \"total_usd\": 9410.0, \"vendor\": \"Orbit Logistics\"}, \"payment\": {\"days_until_due\": 11, \"discount_expires_in_days\": null, \"early_payment_discount_pct\": null, \"status\": \"scheduled\", \"terms\": \"net 15\"}, \"purchase_order\": {\"freight_terms\": \"freight prepaid by vendor, not separately billable\", \"id\": \"PO-6421\", \"lines\": [{\"qty\": 250, \"unit_usd\": 37.64}], \"total_usd\": 9410.0}, \"vendor_history\": {\"disputes_12m\": 1, \"invoices_12m\": 27, \"prior_invoice_ids\": [\"INV-2026-4388\"]}}",
+    "question": "How should this vendor invoice be dispositioned?",
+    "options": "approve: Matches the order and delivery; approve for payment.\nhold: Something needs confirming before payment; hold pending clarification.\nmanual_review: A human in finance must review the discrepancy.\nreject: Should not be paid: duplicate, unauthorised or materially wrong.",
+    "gold": "reject"
   },
+  {
+    "label": "Security alert",
+    "id": "security_incidents_000059:true_positive",
+    "kind": "noul",
+    "state": "{\"alert\": {\"description\": \"an endpoint agent matched a known signature\", \"evidence\": \"An endpoint agent detected a known malware signature on a contractor's workstation. The source address is not present on the internal allowlist.\", \"rule\": \"malware_signature\"}, \"context\": {\"asset_criticality\": \"crown_jewel\", \"change_window_active\": true, \"source_on_allowlist\": false}, \"history\": {\"credential_rotation_days_ago\": 180, \"distinct_countries_30d\": 4, \"logins_30d\": 1303, \"prior_alerts_90d\": 0}, \"principal\": {\"mfa_enrolled\": true, \"name\": \"usr-support-546\", \"privileges\": [\"repo:read\"], \"type\": \"contractor\"}}",
+    "question": "This alert reflects genuinely malicious or unauthorised activity.",
+    "options": "no: Benign activity, a misconfiguration, or a known false positive.\nyes: The underlying behaviour is malicious or unauthorised.",
+    "gold": "true"
+  }
 ];
 
 // ---------------------------------------------------------------- state
-let tok, model, cfg, tpl, rules = [], alpha = null, shipped = null, releaseName = null, last = null, kind = "choice";
+let tok, model, cfg, tpl, rules = [], alpha = null, shipped = null, releaseName = null, last = null, kind = "choice", gold = null;
 
 // ------------------------------------------------- form and examples
 function setKind(k) {
   kind = k;
   for (const b of $("kinds").children) b.setAttribute("aria-pressed", String(b.dataset.kind === k));
-  $("options-wrap").hidden = k === "noul";
-  $("options-label").innerHTML = k === "score"
-    ? 'Levels <span>(one per line, lowest first)</span>'
-    : 'Options <span>(one per line, name: description)</span>';
+  $("options-label").innerHTML = {
+    choice: 'Options <span>(one per line, name: description)</span>',
+    noul: 'Meaning of no and yes <span>(optional; lines starting no: and yes:)</span>',
+    score: 'Levels <span>(one per line, lowest first)</span>',
+  }[k];
 }
 function loadExample(i) {
   const e = EXAMPLES[i];
   $("state").value = e.state; $("question").value = e.question; $("options").value = e.options;
   setKind(e.kind);
+  gold = e.gold;
   [...$("examples").children].forEach((c, j) => c.setAttribute("aria-pressed", String(j === i)));
 }
+function edited() {  // the gold answer belongs to the example as given
+  gold = null;
+  [...$("examples").children].forEach((c) => c.setAttribute("aria-pressed", "false"));
+}
+for (const id of ["state", "question", "options"]) $(id).addEventListener("input", edited);
 EXAMPLES.forEach((e, i) => {
   const b = document.createElement("button");
   b.type = "button"; b.className = "chip"; b.textContent = e.label;
   b.addEventListener("click", () => { loadExample(i); if (model) decide(); });
   $("examples").append(b);
 });
-for (const b of $("kinds").children) b.addEventListener("click", () => setKind(b.dataset.kind));
+for (const b of $("kinds").children) b.addEventListener("click", () => { if (b.dataset.kind !== kind) edited(); setKind(b.dataset.kind); });
 loadExample(0);
 
 // --------------------------------------- the same request -> pairs as Python
@@ -403,10 +436,14 @@ function buildDecision() {
   const question = $("question").value.trim();
   if (!state || !question) throw new Error("Write a state and a question.");
   let options, descs;
+  const lines = $("options").value.split("\n").map((l) => l.trim()).filter(Boolean);
   if (kind === "noul") {
     options = ["false", "true"]; descs = [null, null];
+    for (const l of lines) {
+      const m = l.match(/^(no|false|yes|true)\s*:\s*(.*)$/i);
+      if (m) descs[/^(yes|true)$/i.test(m[1]) ? 1 : 0] = m[2].trim() || null;
+    }
   } else {
-    const lines = $("options").value.split("\n").map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) throw new Error(kind === "score" ? "Give at least two levels, one per line." : "Give at least two options, one per line.");
     if (kind === "score") {
       options = lines.map((_, i) => String(i)); descs = lines;
@@ -415,7 +452,10 @@ function buildDecision() {
       descs = lines.map((l) => (l.includes(":") ? l.slice(l.indexOf(":") + 1).trim() : null));
     }
   }
-  const shown = kind === "noul" ? ["no", "yes"] : kind === "score" ? descs : options;
+  // a score level "Benign: read-only actions" is shown as "Benign"
+  const shown = kind === "noul" ? ["no", "yes"]
+    : kind === "score" ? descs.map((x) => (x.includes(":") && x.indexOf(":") < 32 ? x.slice(0, x.indexOf(":")) : x))
+    : options;
   const optionText = (i) => {
     const opt = kind === "noul" ? ({ false: "no", true: "yes" })[options[i]] : options[i];
     return descs[i] ? `${opt}: ${descs[i]}` : opt;
@@ -492,6 +532,17 @@ function renderDecision() {
   v.innerHTML = `<b>${automate ? "Automate" : "Escalate"}</b><span class="what">${automate ? "safe to act on within the budget" : "hand this one to a person or a bigger model"}</span>`;
   $("answer").innerHTML = `Answer: <strong></strong> with confidence ${conf.toFixed(2)}, in ${Math.round(ms)} ms`;
   $("answer").querySelector("strong").textContent = d.shown[top];
+  const g = $("gold");
+  const gi = last.gold == null ? -1 : d.options.indexOf(last.gold);
+  if (gi < 0) g.textContent = "";
+  else {
+    const verdict = gi === top ? "Same answer."
+      : automate ? `Different answer, and at this budget the model acts on it: up to ${pct(alpha)} of automated answers may be wrong.`
+      : "Different answer, and the gate sent it to a person instead.";
+    g.innerHTML = "Benchmark answer: <strong></strong>. ";
+    g.querySelector("strong").textContent = d.shown[gi];
+    g.append(verdict);
+  }
   const dot = $("dot");
   dot.classList.remove("hidden");
   dot.style.left = `${100 * conf}%`;
@@ -530,7 +581,7 @@ async function decide() {
     const z = await score(d.pairs);
     const ms = performance.now() - t0;
     const p = softmax(z, (cfg.temperatures || {})[kind] ?? 1);
-    last = { d, p, ms };
+    last = { d, p, ms, gold };
     renderDecision();
     $("hint").textContent = "";
   } catch (e) {
