@@ -50,7 +50,7 @@ phrasing ([one audit](https://github.com/jujumilk3/jev-calibration-audit/blob/ma
 measured a 0.125 mean gap between the same question asked as yes/no and as a
 two-option choice), so a threshold tuned on someone else's data says little about
 yours. This model ships with the tool that turns a re-check on your own data into
-a guarantee, and was trained to automate as much as that guarantee allows.
+a guarantee.
 
 ## Results
 
@@ -58,6 +58,8 @@ Evaluated on [typed-decisions](https://huggingface.co/datasets/LocalLLaMA/typed-
 `test` (400 cases, 2,000 decisions), the jev-distill `test_set_30k` and its `ood`
 split. The model was fitted on typed-decisions `train` (it belongs in that
 benchmark's "fitted on train" table) and never saw `test`.
+
+![Share of decisions automated at each guaranteed error level](https://huggingface.co/$repo_id/resolve/main/assets/automation_vs_alpha.png)
 
 Headline metric: **automation rate at a guaranteed error ≤ $alpha**, i.e. the
 share of decisions the model may take alone while the error among those
@@ -71,6 +73,22 @@ exceeded the budget. It is an empirical sanity check of the guarantee (which
 promises the true error exceeds the budget with probability ≤ δ); the finite
 test half adds some sampling noise of its own.
 
+### Compared with the models Hugging Face scored
+
+Hugging Face published per-decision results for the models it ran on typed-decisions
+`test` (bucket [`SaylorTwift/typed-decisions-evals`](https://huggingface.co/buckets/SaylorTwift/typed-decisions-evals)).
+The same calibration, case splits and correctness rule (that scorer counts a tie in the
+gold as correct, so accuracies differ slightly from the table above) are applied to
+every row, ours included. Read it with the training labels: this model was fitted on
+typed-decisions `train`, most rows are general models scored zero-shot, and
+Phocinae-Largha's shipped weights saw 500 of the test decisions.
+
+![Automation at a guaranteed error of 10%, every model](https://huggingface.co/$repo_id/resolve/main/assets/automation_board.png)
+
+The full table, with 5% and 20% and the Bonferroni comparison, is `automation_board.md`
+in [$results_repo](https://huggingface.co/datasets/$results_repo); `scripts/automation_board.py`
+in the GitHub repo rebuilds it.
+
 ### Ablation: does Conformal Training help?
 
 $ablation
@@ -80,9 +98,11 @@ $ablation
 $shift
 
 The guarantee assumes deployment data looks like the calibration data. If it
-doesn't, re-calibrate on ~500 labelled examples from your own traffic
-(`safedecide calibrate`). Ticket systems usually already hold these labels:
-which team closed the ticket, whether the refund was approved.
+doesn't, re-calibrate on labelled examples from your own traffic
+(`safedecide calibrate`). Stricter levels need more of them: on typed-decisions,
+600 calibration decisions certified 10% but not 5%. Ticket systems usually
+already hold these labels: which team closed the ticket, whether the refund was
+approved.
 
 ### Speed
 
@@ -123,8 +143,9 @@ Serve it behind the same `/v1/systemone` API as Jev: `safedecide serve --model $
   invariance is exact by construction. Standard `AutoModelForSequenceClassification`,
   so it exports to ONNX and runs in the browser with transformers.js.
 * **Training:** soft-label cross-entropy against teacher distributions + Brier
-  score (proper scoring) + ranked probability score for ordinal questions +
-  Conformal Training size penalty (Stutz et al., ICLR 2022). Two stages: jev-distill
+  score (proper scoring) + ranked probability score for ordinal questions.
+  Conformal Training (Stutz et al., ICLR 2022) was tested as the ablation above;
+  this checkpoint does not use it, since it did not help on typed-decisions. Two stages: jev-distill
   `openjev_v2` plus the typed-decisions train carve, then the typed-decisions train
   carve alone at 640 tokens (no typed-decisions input is truncated).
 * **Calibration:** per-kind temperature scaling (temperatures: `$temperatures`),
