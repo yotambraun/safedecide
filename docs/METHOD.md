@@ -74,6 +74,12 @@ results, most models automate under 6% at that level.
 **What it does not need:** calibrated probabilities. A badly calibrated model
 still gets a valid guarantee; it just automates less.
 
+**What it does not give:** a guarantee per task. The bound is on the error
+over the whole mix the calibration set was drawn from. On jev-distill `ood`,
+at one certified threshold (0.95, ConfTr stage-2 model) the pooled error was
+4.3%, but 11.6% on `snake-v1` and 1.4% on `workflow-controls-v1`. If one task
+matters on its own, calibrate on that task.
+
 **What it does need:** exchangeability. Under distribution shift the promise is
 void. `pipeline.shift_test` calibrates in-distribution and deploys on the OOD
 split to measure how badly it breaks.
