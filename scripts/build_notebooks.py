@@ -646,7 +646,7 @@ md(
 ## 7. Publish
 
 Creates the model repo (weights, ONNX, card, eval results), the results dataset (raw
-predictions) and the demo Space, all **private**; make them public on launch day from each
+predictions) and the in-browser demo Space, all **private**; make them public on launch day from each
 repo's settings. After reading the card, set `PUBLISH = True` and run this cell alone.
 """,
 )
@@ -668,8 +668,8 @@ if PUBLISH:
     print(push_results_dataset(RES, RESULTS_REPO, MODEL_REPO, private=PRIVATE))
 
     api = HfApi()
-    api.create_repo(SPACE_REPO, repo_type="space", space_sdk="gradio", private=PRIVATE, exist_ok=True)
-    api.add_space_variable(SPACE_REPO, "MODEL_REPO", MODEL_REPO)
+    # A static Space: the model runs in the visitor's browser (transformers.js), free to host
+    api.create_repo(SPACE_REPO, repo_type="space", space_sdk="static", private=PRIVATE, exist_ok=True)
     api.upload_folder(repo_id=SPACE_REPO, repo_type="space", folder_path="space", commit_message="Upload demo")
     print(f"https://huggingface.co/spaces/{SPACE_REPO}")
 else:
