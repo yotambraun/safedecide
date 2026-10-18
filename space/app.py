@@ -31,9 +31,9 @@ with open(model_file("safedecide_config.json"), encoding="utf-8") as f:
 # fp32, not int8: the automate/escalate threshold was calibrated on full-precision outputs.
 session = ort.InferenceSession(model_file("onnx/model.onnx"), providers=["CPUExecutionProvider"])
 TEMPS = config.get("temperatures", {})
-RULE = config.get("selective_rule", {})
-THRESHOLD = RULE.get("threshold")
-THRESHOLD = float("inf") if THRESHOLD is None else float(THRESHOLD)
+DEFAULT_RULE = config.get("selective_rule", {})
+RULES = {f"{r['alpha']:.0%}": r for r in config.get("selective_rules") or [DEFAULT_RULE]}
+DEFAULT_LEVEL = f"{DEFAULT_RULE['alpha']:.0%}"
 MAX_LEN = int(config.get("max_length", 384))
 NOUL = {"false": "no", "true": "yes"}
 
@@ -55,7 +55,7 @@ def score(kind, state, question, options, descriptions):
     return p / p.sum(), ms
 
 
-def run(kind, state, question, options_text):
+def run(kind, state, question, options_text, level):
     if kind == "noul":
         options, descs = ["false", "true"], [None, None]
     else:
@@ -66,13 +66,16 @@ def run(kind, state, question, options_text):
         descs = [ln.split(":", 1)[1].strip() if ":" in ln else None for ln in lines]
     p, ms = score(kind, state, question, options, descs)
     top = int(p.argmax())
-    automate = p[top] >= THRESHOLD
+    rule = RULES[level]
+    threshold = float("inf") if rule.get("threshold") is None else float(rule["threshold"])
+    automate = p[top] >= threshold
     shown = [NOUL.get(o, o) if kind == "noul" else o for o in options]
     verdict = "✅ **Automate**" if automate else "↗️ **Escalate to a human / bigger model**"
     md = (
         f"### {shown[top]}  ({p[top]:.0%})\n\n{verdict}\n\n"
-        f"Threshold {THRESHOLD:.3f} · {ms:.0f} ms on CPU\n\n"
-        f"_{RULE.get('statement', '')}_"
+        + (f"Threshold {threshold:.3f}" if threshold < float("inf") else f"No threshold is certified at {level}")
+        + f" · {ms:.0f} ms on CPU\n\n"
+        f"_{rule.get('statement', '')}_"
     )
     return md, {o: float(pi) for o, pi in zip(shown, p)}
 
@@ -109,11 +112,12 @@ with gr.Blocks(title="SafeDecide") as demo:
             state = gr.Textbox(lines=4, label="State (ticket, log, agent step, JSON…)")
             question = gr.Textbox(label="Question")
             options = gr.Textbox(lines=4, label="Options, one per line (`name: description`). Ignored for noul.")
+            level = gr.Radio(list(RULES), value=DEFAULT_LEVEL, label="Error you can accept on automated decisions")
             btn = gr.Button("Decide", variant="primary")
         with gr.Column():
             verdict = gr.Markdown()
             probs = gr.Label(label="Probabilities")
-    btn.click(run, [kind, state, question, options], [verdict, probs])
+    btn.click(run, [kind, state, question, options, level], [verdict, probs])
     gr.Examples(EXAMPLES, [kind, state, question, options])
 
 demo.launch()

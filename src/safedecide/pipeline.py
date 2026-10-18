@@ -41,6 +41,7 @@ def calibrate_checkpoint(
     seed: int = 0,
     output_dir: str | None = None,
     temperature_set: Sequence[Decision] | None = None,
+    alphas: Sequence[float] = (0.05, 0.10, 0.20),
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
     selective threshold on the other half (disjoint by case, so the guarantee is valid).
@@ -49,6 +50,10 @@ def calibrate_checkpoint(
     With ``temperature_set`` (labelled data disjoint from ``calibration_set``,
     e.g. the validation split) the temperatures are fitted there and the whole
     calibration set goes to the threshold.
+
+    A rule is certified at every level in ``alphas`` (plus ``alpha``), each a
+    separate guarantee; ``alpha`` is the default one. Pick the level from your
+    error budget, not from which level automates most.
 
     ``path`` is a local checkpoint or a Hub repo id. A Hub model is first
     downloaded into ``output_dir`` (default: a folder named after the repo), and
@@ -70,14 +75,17 @@ def calibrate_checkpoint(
     probs_c = [softmax_np(z, temps[d.kind]) for z, d in zip(logits_c, conf_set)]
     conf = top_confidence(probs_c)
     correct = np.array([int(p.argmax()) == d.label for p, d in zip(probs_c, conf_set)])
-    rule = calibrate_selective(conf, correct, alpha, delta)
-    rule_d = rule.to_dict()
-    rule_d["statement"] = guarantee_statement(alpha, delta)
+    rules = []
+    for a in sorted({*alphas, alpha}):
+        rule_d = calibrate_selective(conf, correct, a, delta).to_dict()
+        rule_d["statement"] = guarantee_statement(a, delta)
+        rules.append(rule_d)
 
     decider.config.update(
         {
             "temperatures": temps,
-            "selective_rule": rule_d,
+            "selective_rule": next(r for r in rules if r["alpha"] == alpha),
+            "selective_rules": rules,
             "calibration": {
                 "n_temperature": len(temp_set),
                 "n_selective": len(conf_set),

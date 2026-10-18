@@ -62,6 +62,15 @@ violates about 18% of the time (more than δ), so the test can tell a valid rule
 from an invalid one. On our models' real predictions error falls with
 confidence, and fixed-sequence testing automates more (see the results).
 
+**Error levels.** Every checkpoint is certified at α = 5%, 10% and 20%, each
+by the procedure above, and the user picks the level that matches their error
+budget. Each level is its own guarantee; picking the level that happens to
+automate most, after seeing the results, is not covered. The typed-decisions
+release defaults to 10%. Its gold labels are the mean of three teacher samples
+(teacher self-agreement 0.735), so even confident answers carry label noise, and
+600 calibration decisions rarely certify 5%. On Hugging Face's published
+results, most models automate under 6% at that level.
+
 **What it does not need:** calibrated probabilities. A badly calibrated model
 still gets a valid guarantee; it just automates less.
 
@@ -133,6 +142,9 @@ calibration carve is B (`calibrate_checkpoint(..., temperature_set=...)`); the
 validation carve also picked the checkpoint, which is fine because B is never
 seen before the threshold is set. Disjoint sets keep the guarantee valid (the
 temperatures are fixed before §2 sees B).
+
+The release is the stage-2 model with the lowest validation NLL. Choosing it by
+automation on B would reuse the data behind its guarantee.
 
 ## 7. Evaluation protocol
 

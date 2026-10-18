@@ -97,6 +97,7 @@ import torch
 
 PROFILE = "clean"          # "clean" -> Apache-2.0 release. "research" adds Jev-labelled rows -> non-commercial.
 ALPHA, DELTA = 0.05, 0.10  # error budget on automated decisions; 1 - DELTA = confidence in that promise
+TD_ALPHA = 0.10            # default level of the typed-decisions release (5%, 10% and 20% are all certified)
 TRAIN_MINUTES = 25         # per training run (baseline and ConfTr)
 MAX_EVAL = 4000            # decisions per jev-distill evaluation pool
 DISCONNECT_WHEN_DONE = True
@@ -254,8 +255,10 @@ mixed carve (jev-distill + typed-decisions) in two halves, one per step. Stage-2
 their temperatures on the typed-decisions validation carve, so the whole typed-decisions
 calibration carve (600 decisions) sets the threshold.
 
-The model to release is chosen among the stage-2 models here, on calibration data (most
-decisions automated), never on test data.
+The model to release is the stage-2 model with the lowest validation NLL. Choosing it on the
+calibration carve would reuse the data behind its guarantee, and test data is never used.
+Every model gets a threshold at 5%, 10% and 20% error; the typed-decisions release defaults
+to 10% (on that benchmark's noisy gold, 600 decisions rarely certify 5%).
 """,
 )
 code(
@@ -268,11 +271,11 @@ FITTED = {TDCT_DIR: "SafeDecide (ConfTr)", TD_DIR: "SafeDecide (no ConfTr)",
           TDONLY_DIR: "SafeDecide, typed-decisions only"}
 cal = {p: calibrate_checkpoint(p, calib_set, alpha=ALPHA, delta=DELTA) for p in GENERAL}
 # Stage 2: temperatures on the typed-decisions validation carve, so all of the calibration carve sets the threshold
-cal |= {p: calibrate_checkpoint(p, TD["calibration"], alpha=ALPHA, delta=DELTA, temperature_set=TD["validation"])
+cal |= {p: calibrate_checkpoint(p, TD["calibration"], alpha=TD_ALPHA, delta=DELTA, temperature_set=TD["validation"])
         for p in FITTED}
 for path, c in cal.items():
-    print(path, json.dumps({"temperatures": c["temperatures"], "rule": c["selective_rule"]}, indent=1))
-BEST_DIR = max(FITTED, key=lambda p: (cal[p]["selective_rule"]["calibration_automation"], -cal[p]["val"]["nll"]))
+    print(path, json.dumps({"temperatures": c["temperatures"], "rules": c["selective_rules"]}, indent=1))
+BEST_DIR = min(FITTED, key=lambda p: cal[p]["val"]["nll"])  # validation only: the calibration carve stays untouched
 RELEASE_NAME = FITTED[BEST_DIR]
 print("Release candidate:", RELEASE_NAME, BEST_DIR)
 """,
@@ -396,8 +399,24 @@ BEST_DIR = info["release"]
 td_test = load_typed_decisions("test")
 td_scores = json.load(open(f"{RES}/typed_decisions_official.json"))
 results = {p: json.load(open(f"{RES}/{p}.json")) for p in ("typed_decisions_test", "jev_test_30k", "jev_ood")}
-ALPHA = 0.05
+ALPHA, TD_ALPHA = 0.05, 0.10
 print("Release candidate:", BEST_DIR)
+""",
+)
+code(
+    cpu,
+    """
+from safedecide.data import typed_decisions_splits
+from safedecide.pipeline import calibrate_checkpoint, shipped_rule_check
+
+# Runs from before multi-level rules: re-certify at 5/10/20% (same temperatures, a few minutes on CPU)
+cfg = json.load(open(f"{BEST_DIR}/safedecide_config.json"))
+if "selective_rules" not in cfg or cfg["selective_rule"]["alpha"] != TD_ALPHA:
+    TD = typed_decisions_splits()
+    cfg = calibrate_checkpoint(BEST_DIR, TD["calibration"], alpha=TD_ALPHA, delta=0.1, temperature_set=TD["validation"])
+    info["shipped_rule_on_typed_decisions_test"] = shipped_rule_check(BEST_DIR, td_test)
+    json.dump(info, open(f"{RES}/run_info.json", "w"), indent=1)
+print(json.dumps({"rules": cfg["selective_rules"], "shipped": info["shipped_rule_on_typed_decisions_test"]}, indent=1))
 """,
 )
 md(
@@ -458,12 +477,13 @@ json.dump(td_scores, open(f"{RES}/typed_decisions_official.json", "w"), indent=1
 save_results(results["typed_decisions_test"], f"{RES}/typed_decisions_test.json")
 md_parts = ["## typed-decisions (test, 2,000 decisions)\\n\\n" + td_table(td_scores)]
 for pool, res in results.items():
-    md_parts.append(f"## {pool}: Automation @ {ALPHA:.0%}\\n\\n" + markdown_table(res, ALPHA))
+    a = TD_ALPHA if pool == "typed_decisions_test" else ALPHA
+    md_parts.append(f"## {pool}: Automation @ {a:.0%}\\n\\n" + markdown_table(res, a))
     shown = [r for r in res if not r["model"].startswith("SafeDecide general")]  # stage 1 stays in the tables
     plot_automation_vs_alpha(shown, f"{RES}/{pool}_automation_vs_alpha.png")
-    plot_risk_coverage(shown, f"{RES}/{pool}_risk_coverage.png", ALPHA)
-    plot_automation(shown, f"{RES}/{pool}_automation.png", ALPHA)
-    plot_validity(shown, f"{RES}/{pool}_validity.png", ALPHA)
+    plot_risk_coverage(shown, f"{RES}/{pool}_risk_coverage.png", a)
+    plot_automation(shown, f"{RES}/{pool}_automation.png", a)
+    plot_validity(shown, f"{RES}/{pool}_validity.png", a)
 leaderboard = "\\n\\n".join(md_parts)
 open(f"{RES}/leaderboard.md", "w").write(leaderboard)
 display(Markdown(leaderboard))
@@ -518,7 +538,7 @@ SPACE_REPO = f"{HF_USER}/safedecide"
 
 card = render_model_card(BEST_DIR, MODEL_REPO, results["typed_decisions_test"],
                          ablation_md=open(f"{RES}/ablation.md").read(),
-                         shift=json.load(open(f"{RES}/shift.json")), latency=latency, alpha=ALPHA,
+                         shift=json.load(open(f"{RES}/shift.json")), latency=latency, alpha=TD_ALPHA,
                          results_repo=RESULTS_REPO)
 release_name = info["release_name"]
 eval_yaml = eval_results_yaml(

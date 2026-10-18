@@ -129,6 +129,8 @@ def test_full_pipeline(tiny, tmp_path):
     config = calibrate_checkpoint(best, cal_set, alpha=0.1, delta=0.1, temperature_set=val_set)
     assert config["calibration"]["n_temperature"] == len(val_set)
     assert config["calibration"]["n_selective"] == len(cal_set)
+    assert [r["alpha"] for r in config["selective_rules"]] == [0.05, 0.1, 0.2]
+    assert config["selective_rule"]["alpha"] == 0.1
 
     decider = SafeDecider.from_pretrained(best, device="cpu")
     resp = decider.decide(
@@ -146,6 +148,12 @@ def test_full_pipeline(tiny, tmp_path):
     )
     assert resp["answers"]["team"]["choice"] == "billing"
     assert resp["answers"]["team"]["action"] in {"automate", "escalate"}
+    assert resp["guarantee"]["alpha"] == 0.1
+    assert decider.threshold_for(0.2) <= decider.threshold_for(0.05)  # a looser budget never automates less
+    loose = decider.decide({"state": "refund", "questions": {"u": {"type": "noul", "instructions": "urgent?"}}}, 0.2)
+    assert loose["guarantee"]["alpha"] == 0.2
+    with pytest.raises(ValueError, match="no rule certified"):
+        decider.rule(0.3)
 
     # order invariance is exact by construction
     d1 = Decision("a", "choice", "customer says crash", "which team?", ["billing", "technical", "account"])

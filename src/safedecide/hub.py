@@ -11,6 +11,17 @@ from .data import PROFILE_LICENSE
 from .report import markdown_table
 
 
+def _rules_table(rules: list[dict], default_alpha: float | None) -> str:
+    lines = ["| Error level α | Threshold | Automated on the calibration carve |", "|---|---|---|"]
+    for r in rules:
+        level = f"{r['alpha']:.0%}" + (" (default)" if r["alpha"] == default_alpha else "")
+        if r.get("threshold") is None:
+            lines.append(f"| {level} | not certified | 0% (escalates everything) |")
+        else:
+            lines.append(f"| {level} | {r['threshold']:.3f} | {r['calibration_automation']:.1%} |")
+    return "\n".join(lines)
+
+
 def render_model_card(
     model_dir: str,
     repo_id: str,
@@ -23,6 +34,7 @@ def render_model_card(
 ) -> str:
     cfg = json.loads(Path(model_dir, "safedecide_config.json").read_text(encoding="utf-8"))
     rule = cfg.get("selective_rule", {})
+    rules_md = _rules_table(cfg.get("selective_rules") or ([rule] if rule else []), rule.get("alpha"))
     profile = cfg.get("profile", "clean")
     template = Template(resources.files("safedecide").joinpath("model_card.md").read_text(encoding="utf-8"))
     shift_md = "Not measured."
@@ -63,6 +75,7 @@ def render_model_card(
         alpha=f"{rule.get('alpha', alpha):.0%}" if rule.get("alpha") is not None else f"{alpha:.0%}",
         delta=f"{rule.get('delta', 0.1):.0%}",
         threshold=rule.get("threshold"),
+        rules=rules_md,
         statement=rule.get("statement", ""),
         temperatures=json.dumps(cfg.get("temperatures", {})),
         leaderboard=markdown_table(results, alpha) if results else "_run the benchmark first_",

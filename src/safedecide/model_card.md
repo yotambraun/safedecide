@@ -29,6 +29,10 @@ statistical guarantee:
 
 > $statement
 
+Certified levels (pick one with `decide(request, alpha=...)`):
+
+$rules
+
 The guarantee does **not** rely on the model's probabilities being calibrated.
 It comes from Learn-then-Test risk control (exact Clopper–Pearson bounds,
 fixed-sequence testing over a fixed threshold grid) on a held-out calibration set.
@@ -122,8 +126,8 @@ Serve it behind the same `/v1/systemone` API as Jev: `safedecide serve --model $
   `openjev_v2` plus the typed-decisions train carve, then the typed-decisions train
   carve alone at 640 tokens (no typed-decisions input is truncated).
 * **Calibration:** per-kind temperature scaling (temperatures: `$temperatures`),
-  then the selective threshold (`$threshold`) on a disjoint split of the
-  typed-decisions calibration carve (by case, never `test`).
+  then the selective thresholds above on the typed-decisions calibration carve
+  (600 decisions by case, disjoint from the temperature fit; never `test`).
 
 ## Data and license
 

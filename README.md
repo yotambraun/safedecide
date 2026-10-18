@@ -78,6 +78,10 @@ resp["answers"]["allow"]["action"]  # "automate" or "escalate"
 resp["guarantee"]["statement"]  # the promise, in words
 ```
 
+The model ships a threshold certified at each error level of 5%, 10% and 20%.
+`decide(request, alpha=0.2)` picks one (or `?alpha=0.2` on the server); a level
+the calibration data could not certify escalates everything.
+
 The request and response follow the `/v1/systemone` shape, so
 `safedecide serve --model yotambr/safedecide-140m` is a drop-in local server.
 

@@ -64,11 +64,24 @@ class SafeDecider:
     def temperatures(self) -> dict[str, float]:
         return self.config.get("temperatures", {"noul": 1.0, "choice": 1.0, "score": 1.0})
 
+    def rule(self, alpha: float | None = None) -> dict:
+        """The certified rule at error level ``alpha`` (default: the one saved as default)."""
+        default = self.config.get("selective_rule") or {}
+        if alpha is None:
+            return default
+        rules = self.config.get("selective_rules") or [default]
+        for r in rules:
+            if r.get("alpha") is not None and math.isclose(r["alpha"], alpha):
+                return r
+        raise ValueError(f"no rule certified at alpha={alpha}; levels: {[r.get('alpha') for r in rules]}")
+
+    def threshold_for(self, alpha: float | None = None) -> float:
+        t = self.rule(alpha).get("threshold")
+        return math.inf if t is None else float(t)
+
     @property
     def threshold(self) -> float:
-        rule = self.config.get("selective_rule") or {}
-        t = rule.get("threshold")
-        return math.inf if t is None else float(t)
+        return self.threshold_for()
 
     # ------------------------------------------------------------ predict
     @torch.no_grad()
@@ -90,9 +103,14 @@ class SafeDecider:
         return [softmax_np(z, temps.get(d.kind, 1.0)) for z, d in zip(self.logits(decisions), decisions)]
 
     # ---------------------------------------------------- System One API
-    def decide(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Answer a ``/v1/systemone`` request; adds an automate/escalate flag."""
+    def decide(self, request: dict[str, Any], alpha: float | None = None) -> dict[str, Any]:
+        """Answer a ``/v1/systemone`` request; adds an automate/escalate flag.
+
+        ``alpha`` picks one of the certified error levels (default: the model's default).
+        """
         t0 = time.perf_counter()
+        rule = self.rule(alpha)
+        threshold = self.threshold_for(alpha)
         decisions = decisions_from_systemone_request(request)
         probs = self.predict_proba(decisions)
         answers: dict[str, Any] = {}
@@ -103,7 +121,7 @@ class SafeDecider:
                 "type": d.kind,
                 "confidence": conf,
                 "probabilities": {o: float(pi) for o, pi in zip(d.options, p)},
-                "action": "automate" if conf >= self.threshold else "escalate",
+                "action": "automate" if conf >= threshold else "escalate",
             }
             if d.kind == "noul":
                 ans["noul"] = float(p[1])
@@ -113,7 +131,6 @@ class SafeDecider:
             else:
                 ans["choice"] = d.options[top]
             answers[d.id] = ans
-        rule = self.config.get("selective_rule") or {}
         return {
             "object": "structured_decision",
             "model": self.config.get("model_name", "safedecide"),

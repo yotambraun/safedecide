@@ -18,8 +18,15 @@ class FakeApi:
 
 @pytest.fixture
 def model_dir(tmp_path):
-    rule = {"threshold": 0.9, "alpha": 0.05, "delta": 0.1, "statement": "the promise"}
-    cfg = {"profile": "clean", "base_model": "jhu-clsp/mmBERT-small", "selective_rule": rule, "temperatures": {}}
+    rule = {"threshold": 0.9, "alpha": 0.1, "delta": 0.1, "statement": "the promise", "calibration_automation": 0.3}
+    rules = [{**rule, "alpha": 0.05, "threshold": None, "calibration_automation": 0.0}, rule]
+    cfg = {
+        "profile": "clean",
+        "base_model": "jhu-clsp/mmBERT-small",
+        "selective_rule": rule,
+        "selective_rules": rules,
+        "temperatures": {},
+    }
     (tmp_path / "safedecide_config.json").write_text(json.dumps(cfg), encoding="utf-8")
     return tmp_path
 
@@ -37,6 +44,8 @@ def test_card_metadata_and_latency_table(model_dir):
     assert "license_name" not in card  # only for the research profile
     assert "| int8 | 141.5 MB | 27.0 ms" in card
     assert "the promise" in card
+    assert "| 5% | not certified | 0% (escalates everything) |" in card
+    assert "| 10% (default) | 0.900 | 30.0% |" in card
 
 
 def test_push_model_and_results(model_dir, tmp_path, monkeypatch):
