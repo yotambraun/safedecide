@@ -16,8 +16,8 @@ that choice with a statistical guarantee:
 > With probability at least 1 − δ over the calibration data, the error rate among
 > the decisions marked `automate` is at most α.
 
-The guarantee needs only a few hundred labelled examples from your own traffic. It
-does not assume the model is calibrated, which matters because calibration of
+The guarantee needs a few hundred labelled examples from your own traffic for a
+10–20% budget, and more for stricter ones. It does not assume the model is calibrated, which matters because calibration of
 these models shifts with task and phrasing (an
 [independent audit](https://github.com/jujumilk3/jev-calibration-audit/blob/main/FINDINGS.md)
 measured a 0.125 mean probability gap between asking the same thing as a yes/no
@@ -31,20 +31,41 @@ and as a two-option choice).
 ## Results
 
 On [typed-decisions](https://huggingface.co/datasets/LocalLLaMA/typed-decisions)
-(test split, 2,000 decisions; models fitted on its `train` split, never on `test`):
+(test split, 400 cases, 2,000 decisions). SafeDecide was fitted on the benchmark's
+`train` split and never saw `test`.
 
-| Model | Params | Accuracy | KL from gold ↓ | Brier ↓ | Automation @ 5% ↑ | Realised error |
+| Model | Params | Accuracy ↑ | KL from gold ↓ | Brier ↓ | Automation @ 10% ↑ | Realised error |
 |---|---|---|---|---|---|---|
-| SafeDecide (Conformal Training) | 140M | – | – | – | – | – |
-| SafeDecide (no Conformal Training) | 140M | – | – | – | – | – |
-| Phocinae-Largha-150M-v1 | 144M | – | – | – | – | – |
-| Prior (ignores the input) | – | – | – | – | – | – |
+| **SafeDecide** (released) | 140M | 0.754 | 0.126 | 0.069 | **33.2%** ± 5.2 | 6.3% |
+| SafeDecide with Conformal Training (ablation) | 140M | 0.753 | 0.130 | 0.070 | 29.7% ± 5.2 | 6.3% |
+| Phocinae-Largha-150M-v1, shipped weights (trained on 500 test decisions) | 144M | 0.906 | 0.055 | 0.025 | 93.9% ± 2.9 | 7.8% |
+| Prior (ignores the input) | – | 0.487 | 0.328 | 0.181 | 0.0% | – |
 
-*Automation @ 5%*: share of decisions automated with the error among them
-guaranteed ≤ 5% (δ = 10%), mean over 100 random calibration/test splits by case.
-Full tables with 95% intervals, the ablation and the distribution-shift test are in
-the [model card](https://huggingface.co/yotambr/safedecide-140m); every
-per-decision prediction is in the [results dataset](https://huggingface.co/datasets/yotambr/safedecide-results).
+*Automation @ 10%*: share of decisions automated with the error among them
+guaranteed ≤ 10% (δ = 10%), mean ± std over 100 random calibration/test splits by
+case. Out of the box, the threshold shipped with the model, applied unchanged to all
+2,000 test decisions, automated 26.2% of them, and 4.4% of those were wrong.
+At 5% nothing is certified on the 600 calibration decisions. The benchmark's gold is
+the mean of three samples from a teacher model, and a fresh sample from that teacher
+matches it only 73.5% of the time, so even confident answers carry label noise.
+
+### Every model Hugging Face scored, under one calibration
+
+Hugging Face published per-decision results for the models it ran on typed-decisions
+(bucket [`SaylorTwift/typed-decisions-evals`](https://huggingface.co/buckets/SaylorTwift/typed-decisions-evals)).
+[`scripts/automation_board.py`](scripts/automation_board.py) applies the same
+calibration, case splits and correctness rule to every row, ours included (that
+scorer counts a tie in the gold as correct, so accuracies differ slightly from the
+table above). Ranked by what each model can decide alone, the order differs from the
+accuracy ranking, and a 140M model fitted on `train` sits with 27B general models
+scored zero-shot. Read each row with its training label.
+
+![Share of typed-decisions test decisions automated with a certified error of at most 10%](https://raw.githubusercontent.com/yotambraun/safedecide/main/results/automation_board.png)
+
+Full tables with 95% intervals, the Conformal Training ablation and the
+distribution-shift test are in [`results/`](results/) and the
+[model card](https://huggingface.co/yotambr/safedecide-140m); every per-decision
+prediction is in the [results dataset](https://huggingface.co/datasets/yotambr/safedecide-results).
 
 ## Install
 
