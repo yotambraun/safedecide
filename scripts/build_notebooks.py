@@ -622,6 +622,15 @@ from safedecide.hub import render_model_card
 from safedecide.typed_decisions import eval_results_yaml
 
 HF_USER = "yotambr"  # Hugging Face username (GitHub is yotambraun)
+EVAL_NOTES = (
+    "Fine-tuned on the typed-decisions train split (a general decision model first trained on the openjev_v2 "
+    "stream of jev-distill-corpus-v3; train carved by case into train/validation/calibration) - NOT zero-shot; "
+    "belongs to the 'fitted or fine-tuned on train' table. Never trained or calibrated on test. Test split, "
+    "400 cases / 2,000 decisions, all answered. One encoder pass per option; each question scored on its own "
+    "(not all five in one request). Accuracy = agreement with the gold label (0.760 counting a tie in the gold "
+    "as correct). ECE = 15-bin max-probability ECE pooled over all decisions (10-bin per question, averaged over "
+    "the 20 questions: 0.169)."
+)
 MODEL_REPO = f"{HF_USER}/safedecide-140m"
 RESULTS_REPO = f"{HF_USER}/safedecide-results"
 SPACE_REPO = f"{HF_USER}/safedecide"
@@ -631,10 +640,10 @@ card = render_model_card(BEST_DIR, MODEL_REPO, results["typed_decisions_test"],
                          shift=json.load(open(f"{RES}/shift.json")), latency=latency, alpha=TD_ALPHA,
                          results_repo=RESULTS_REPO, shipped=shipped)
 eval_yaml = eval_results_yaml(
-    td_scores[info["release_name"]], source_url=f"https://huggingface.co/datasets/{RESULTS_REPO}",
-    user=HF_USER, date=str(datetime.date.today()),
-    notes="Fitted on the typed-decisions train split (carved by case into train/validation/calibration); "
-          "never trained or calibrated on test. One forward pass per option. ECE: 15 equal-width bins.")
+    td_scores[info["release_name"]],
+    source_url=f"https://huggingface.co/datasets/{RESULTS_REPO}/blob/main/predictions/typed_decisions_test/"
+               "safedecide-no-conftr.jsonl",
+    user=HF_USER, date=str(datetime.date.today()), notes=EVAL_NOTES)
 os.makedirs(f"{BEST_DIR}/.eval_results", exist_ok=True)
 open(f"{BEST_DIR}/.eval_results/typed-decisions.yaml", "w").write(eval_yaml)
 display(Markdown(card.split("\\n---\\n", 1)[1]))  # the Hub reads the YAML header; show the page

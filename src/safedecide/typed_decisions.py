@@ -73,7 +73,14 @@ def markdown_table(scores_by_model: dict[str, dict[str, Any]]) -> str:
     return head + "\n".join(rows) + f"\n\nECE: {ECE_BINS} equal-width bins on top-option confidence.\n"
 
 
-def eval_results_yaml(scores: dict[str, Any], source_url: str, user: str, date: str, notes: str) -> str:
+def eval_results_yaml(
+    scores: dict[str, Any],
+    source_url: str,
+    user: str,
+    date: str,
+    notes: str,
+    source_name: str = "Full test distributions",
+) -> str:
     """``.eval_results/typed-decisions.yaml`` for the model repo (Hub eval-results format).
 
     No ``revision`` pin: entries pinned to a stale dataset revision drop off the
@@ -87,7 +94,7 @@ def eval_results_yaml(scores: dict[str, Any], source_url: str, user: str, date: 
             "dataset": {"id": DATASET_ID, "task_id": task},
             "value": round(float(o[task]), 4),
             "date": date,
-            "source": {"url": source_url, "name": "SafeDecide evaluation notebook", "user": user},
+            "source": {"url": source_url, "name": source_name, "user": user},
             "notes": notes,
         }
         for task in ("accuracy", "kl_from_gold", "brier", "ece")
