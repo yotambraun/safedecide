@@ -104,8 +104,10 @@ the state; output = one logit. Softmax over a question's options.
 * **Order invariance is exact.** Permuting options permutes logits, so the
   answer can never depend on option order. Listwise models have to learn this
   or average over permutations.
-* **Cost.** K encoder passes per K-option question. With 42M non-embedding
-  parameters this is still a few ms per option on CPU.
+* **Cost.** K encoder passes per K-option question, run as one batch. Measured
+  on one CPU thread of a Colab VM, a short 3-option decision takes about 83 ms
+  in fp32 ONNX (p50; the model card's Speed table). Long inputs cost more:
+  attention grows with the 640-token context.
 * **Portable.** A standard `AutoModelForSequenceClassification(num_labels=1)`.
 
 ## 5. Training objective

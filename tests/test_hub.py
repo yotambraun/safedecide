@@ -40,8 +40,11 @@ def test_card_metadata_and_latency_table(model_dir):
             "int8": {"p50_ms": 27.0, "p90_ms": 31.0, "threads": 1, "n_options": 3, "file_mb": 141.5},
         },
     }
-    card = render_model_card(str(model_dir), "me/model", [], latency=latency)
+    shipped = {"alpha": 0.1, "automation_rate": 0.262, "selective_error": 0.0439, "n": 2000}
+    card = render_model_card(str(model_dir), "me/model", [], latency=latency, shipped=shipped)
     assert card.startswith("---\nlicense: apache-2.0\n")
+    assert "(2,000 decisions, never used for training or calibration) automated 26.2%" in card
+    assert "4.4% of those were wrong (budget 10%)" in card
     assert "license_name" not in card  # only for the research profile
     assert "| int8 | 141.5 MB | 27.0 ms" in card
     assert "the promise" in card

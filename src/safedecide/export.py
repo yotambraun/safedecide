@@ -6,7 +6,9 @@ browser: ``onnx/model.onnx`` and ``onnx/model_quantized.onnx``.
 
 from __future__ import annotations
 
+import logging
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -29,7 +31,11 @@ def export_onnx(model_dir: str, out_dir: str | None = None, opset: int = 17) -> 
     sample = tok(["option: yes || question: is this urgent?"], ["the server is down"], return_tensors="pt")
     names = [n for n in ("input_ids", "attention_mask", "token_type_ids") if n in sample]
     fp32 = out / "model.onnx"
-    with torch.no_grad():
+    # Tracing warns about Python branches on tensor shapes, and onnxruntime suggests a
+    # pre-processing pass before quantizing. Neither is an error; check_parity measures the result.
+    with torch.no_grad(), warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
+        warnings.filterwarnings("ignore", category=UserWarning, module=r"torch\.onnx")
         torch.onnx.export(
             model,
             tuple(sample[n] for n in names),
@@ -43,7 +49,13 @@ def export_onnx(model_dir: str, out_dir: str | None = None, opset: int = 17) -> 
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
     int8 = out / "model_quantized.onnx"
-    quantize_dynamic(str(fp32), str(int8), weight_type=QuantType.QInt8)
+    root = logging.getLogger()
+    level = root.level
+    root.setLevel(logging.ERROR)
+    try:
+        quantize_dynamic(str(fp32), str(int8), weight_type=QuantType.QInt8)
+    finally:
+        root.setLevel(level)
     return {"fp32": str(fp32), "int8": str(int8)}
 
 

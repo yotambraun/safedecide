@@ -36,8 +36,8 @@ def latency_table(latency: dict) -> str:
         f"onnxruntime on {first['threads']} CPU thread, one {first['n_options']}-option decision.\n\n"
         + "\n".join(lines)
         + "\n\nThe guarantee is calibrated on the full-precision model (PyTorch or fp32 ONNX). "
-        "int8 is faster but shifts the probabilities slightly, so its automate/escalate flags are "
-        "not covered unless you re-calibrate it."
+        "int8 is smaller and faster but changes the logits (last column), so its automate/escalate "
+        "flags are not covered unless you re-calibrate it."
     )
 
 
@@ -50,7 +50,9 @@ def render_model_card(
     latency: dict | None = None,
     alpha: float = 0.05,
     results_repo: str | None = None,
+    shipped: dict | None = None,
 ) -> str:
+    """``shipped`` is ``pipeline.shipped_rule_check`` on held-out data: the default rule, unchanged."""
     cfg = json.loads(Path(model_dir, "safedecide_config.json").read_text(encoding="utf-8"))
     rule = cfg.get("selective_rule", {})
     rules_md = rules_table(cfg.get("selective_rules") or ([rule] if rule else []), rule.get("alpha"))
@@ -65,6 +67,14 @@ def render_model_card(
             f"Shifted (OOD split): {s_sh['automation_rate']:.1%} automated, **{s_sh['selective_error']:.2%} error**."
         )
     lat_md = latency_table(latency) if latency else "Not measured."
+    shipped_md = ""
+    if shipped:
+        shipped_md = (
+            f"Out of the box, the default threshold applied unchanged to typed-decisions `test` "
+            f"({shipped['n']:,} decisions, never used for training or calibration) automated "
+            f"{shipped['automation_rate']:.1%} of them, and {shipped['selective_error']:.1%} of those were wrong "
+            f"(budget {shipped['alpha']:.0%})."
+        )
     return template.safe_substitute(
         repo_id=repo_id,
         results_repo=results_repo or f"{repo_id}-results",
@@ -80,6 +90,7 @@ def render_model_card(
         delta=f"{rule.get('delta', 0.1):.0%}",
         threshold=rule.get("threshold"),
         rules=rules_md,
+        shipped=shipped_md,
         statement=rule.get("statement", ""),
         temperatures=json.dumps(cfg.get("temperatures", {})),
         leaderboard=markdown_table(results, alpha) if results else "_run the benchmark first_",

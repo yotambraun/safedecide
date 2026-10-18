@@ -33,6 +33,8 @@ Certified levels (pick one with `decide(request, alpha=...)`):
 
 $rules
 
+$shipped
+
 The guarantee does **not** rely on the model's probabilities being calibrated.
 It comes from Learn-then-Test risk control (exact Clopper–Pearson bounds,
 fixed-sequence testing over a fixed threshold grid) on a held-out calibration set.

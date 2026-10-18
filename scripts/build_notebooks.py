@@ -497,10 +497,14 @@ phoc_probs = phoc.predict_proba(td_test)
 phoc_scores = score_typed_decisions(phoc_probs, td_test)
 acc = phoc_scores["overall"]["accuracy"]
 REPRODUCED = abs(acc - PUBLISHED_ACCURACY) <= 0.01
+pool = [r for r in results["typed_decisions_test"] if r["model"] != phoc.name]  # a rerun replaces, never adds
 if REPRODUCED:
     td_scores[phoc.name] = phoc_scores
     save_predictions(RES, "typed_decisions_test", phoc.name, td_test, phoc_probs)
-    results["typed_decisions_test"].append(benchmark(phoc, td_test, probs=phoc_probs))
+    pool.append(benchmark(phoc, td_test, probs=phoc_probs))
+else:
+    td_scores.pop(phoc.name, None)
+results["typed_decisions_test"] = pool
 verdict = "reproduced" if REPRODUCED else "**not reproduced**: left out of every table and figure"
 display(Markdown(f"**Phocinae accuracy:** {acc:.4f} (published {PUBLISHED_ACCURACY}), {verdict}."))
 """,
@@ -625,7 +629,7 @@ SPACE_REPO = f"{HF_USER}/safedecide"
 card = render_model_card(BEST_DIR, MODEL_REPO, results["typed_decisions_test"],
                          ablation_md=open(f"{RES}/ablation.md").read(),
                          shift=json.load(open(f"{RES}/shift.json")), latency=latency, alpha=TD_ALPHA,
-                         results_repo=RESULTS_REPO)
+                         results_repo=RESULTS_REPO, shipped=shipped)
 eval_yaml = eval_results_yaml(
     td_scores[info["release_name"]], source_url=f"https://huggingface.co/datasets/{RESULTS_REPO}",
     user=HF_USER, date=str(datetime.date.today()),
@@ -633,7 +637,7 @@ eval_yaml = eval_results_yaml(
           "never trained or calibrated on test. One forward pass per option. ECE: 15 equal-width bins.")
 os.makedirs(f"{BEST_DIR}/.eval_results", exist_ok=True)
 open(f"{BEST_DIR}/.eval_results/typed-decisions.yaml", "w").write(eval_yaml)
-display(Markdown(card))
+display(Markdown(card.split("\\n---\\n", 1)[1]))  # the Hub reads the YAML header; show the page
 """,
 )
 md(
