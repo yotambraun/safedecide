@@ -59,7 +59,8 @@ dev = ["safedecide[all]", "pytest>=8", "ruff>=0.15"]
 packages = ["src/safedecide"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/notebooks", "/space", "/.github", "/scripts"]
+# what a source install needs; notebooks, the Space, figures and scripts live on GitHub
+only-include = ["src", "tests", "configs", "docs/METHOD.md", "README.md", "CHANGELOG.md", "CITATION.cff", "LICENSE"]
 
 [tool.ruff]
 line-length = 120

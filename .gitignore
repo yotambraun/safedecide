@@ -28,3 +28,7 @@ Thumbs.db
 .idea/
 .vscode/
 .cache/
+
+# Local secrets (tokens). Never commit.
+.env
+.env.*

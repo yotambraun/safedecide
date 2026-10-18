@@ -530,7 +530,7 @@ function renderDecision() {
   const v = $("verdict");
   v.className = `verdict ${automate ? "auto" : "esc"}`;
   v.innerHTML = `<b>${automate ? "Automate" : "Escalate"}</b><span class="what">${automate ? "safe to act on within the budget" : "hand this one to a person or a bigger model"}</span>`;
-  $("answer").innerHTML = `Answer: <strong></strong> with confidence ${conf.toFixed(2)}, in ${Math.round(ms)} ms`;
+  $("answer").innerHTML = `Answer: <strong></strong> with confidence ${conf.toFixed(2)}`;
   $("answer").querySelector("strong").textContent = d.shown[top];
   const g = $("gold");
   const gi = last.gold == null ? -1 : d.options.indexOf(last.gold);

@@ -110,29 +110,59 @@ $latency
 
 ## Usage
 
+A held-out customer-service case from typed-decisions, in the `/v1/systemone` shape:
+
 ```python
 from safedecide import SafeDecider
 
 decider = SafeDecider.from_pretrained("$repo_id")
-decider.decide(
+response = decider.decide(
     {
-        "state": "I was charged twice for the same subscription this month.",
+        "state": {
+            "account": {
+                "lifetime_value_usd": 228,
+                "prior_tickets_90d": 0,
+                "seats": 1,
+                "tenure_months": 3,
+                "tier": "standard",
+            },
+            "thread": [
+                {"role": "customer", "text": "My payment didn’t go through, and I’m now locked out of my account."}
+            ],
+        },
         "questions": {
-            "team": {
+            "topic": {
                 "type": "choice",
-                "instructions": "Which team should handle this?",
+                "instructions": "What is this customer conversation primarily about?",
                 "criteria": {
-                    "billing": "Payments and invoices",
-                    "technical": "Bugs and outages",
-                    "account": "Login and access",
+                    "account": "Login, plan changes, profile or access management.",
+                    "billing": "A charge, invoice, subscription or payment problem.",
+                    "delivery": "Shipping, fulfilment or delivery of a physical item.",
+                    "refund": "The customer is explicitly asking for money back.",
+                    "technical": "The product or service is not working as expected.",
                 },
             },
-            "urgent": {"type": "noul", "instructions": "Does this need a reply today?"},
+            "needs_human": {
+                "type": "noul",
+                "instructions": "This conversation requires a human agent rather than automated handling.",
+                "criteria": {
+                    "false": "Automation can carry this to resolution.",
+                    "true": "A human must take over: judgement, authority or empathy is required.",
+                },
+            },
         },
     }
 )
-# -> answers.team.choice == "billing", answers.team.action == "automate" | "escalate"
+
+response["answers"]["topic"]  # choice "billing", confidence 0.92, action "automate"
+response["answers"]["needs_human"]  # noul 0.23 (no), confidence 0.77, action "automate"
+response["guarantee"]["statement"]  # the promise behind every "automate", in words
 ```
+
+Inputs unlike typed-decisions (free text, options without descriptions) are outside
+the shipped guarantee: re-certify on your own labelled decisions with
+`safedecide calibrate --model $repo_id --data my_decisions.jsonl` (format in the
+[README](https://github.com/yotambraun/safedecide#calibrate-on-your-own-data)).
 
 Serve it behind the same `/v1/systemone` API as Jev: `safedecide serve --model $repo_id`.
 
