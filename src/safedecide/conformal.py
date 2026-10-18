@@ -11,11 +11,13 @@ assumption that the model's probabilities are calibrated.
 
        P(model is wrong | confidence >= lambda) <= alpha.
 
-   Method: for every lambda on a fixed grid, an exact Clopper-Pearson upper
-   bound on the selective error; Bonferroni over the grid (Learn-then-Test
-   style, Angelopoulos et al. 2021). Pick the lowest valid lambda = highest
-   automation rate. The headline metric is the automation rate at that
-   lambda: "share of decisions handled with a guaranteed error <= alpha".
+   Method: Learn-then-Test (Angelopoulos et al. 2021) with an exact
+   Clopper-Pearson p-value per threshold on a fixed grid, tested by
+   fixed-sequence testing from a few fixed starting thresholds: each start
+   walks down the grid at level delta / n_starts and stops at its first
+   failure. Pick the lowest certified lambda = highest automation rate.
+   The headline metric is the automation rate at that lambda: "share of
+   decisions handled with a guaranteed error <= alpha".
 
 2. Split conformal prediction sets (LAC / THR)
    Sets C(x) with P(y in C(x)) >= 1-alpha. Automating only singleton sets
@@ -32,6 +34,8 @@ import numpy as np
 from scipy.stats import beta as beta_dist
 
 DEFAULT_GRID = np.round(np.concatenate([np.linspace(0.0, 0.9, 46), np.linspace(0.902, 0.999, 50)]), 4)
+# Where the fixed-sequence chains start (high to low). Fixed in advance, never chosen from data.
+DEFAULT_STARTS = (0.99, 0.95, 0.90, 0.80)
 
 
 # --------------------------------------------------------------------------- #
@@ -68,19 +72,31 @@ def calibrate_selective(
     alpha: float = 0.05,
     delta: float = 0.1,
     grid: Sequence[float] = DEFAULT_GRID,
+    starts: Sequence[float] | None = DEFAULT_STARTS,
 ) -> SelectiveRule:
+    """Lowest threshold whose selective error is certified <= alpha with probability >= 1 - delta.
+
+    ``starts`` gives the fixed-sequence chains; ``starts=None`` falls back to
+    Bonferroni over the whole grid (valid too, but far more conservative).
+    """
     confidence = np.asarray(confidence, dtype=float)
     correct = np.asarray(correct, dtype=bool)
-    per_test_delta = delta / len(grid)  # Bonferroni: valid without any ordering
+    grid_desc = np.sort(np.asarray(grid, dtype=float))[::-1]
+    if starts is None:
+        chains, level = [[lam] for lam in grid_desc], delta / len(grid_desc)
+    else:
+        chains, level = [grid_desc[grid_desc <= s] for s in starts], delta / len(starts)
     best = SelectiveRule(math.inf, alpha, delta, len(confidence), 0.0, 1.0)
-    for lam in sorted(grid):
-        sel = confidence >= lam
-        n = int(sel.sum())
-        k = int((~correct[sel]).sum())
-        ucb = clopper_pearson_upper(k, n, per_test_delta)
-        if ucb <= alpha:
-            # lowest valid threshold = most automation
-            return SelectiveRule(float(lam), alpha, delta, len(confidence), n / len(confidence), ucb)
+    for chain in chains:
+        for lam in chain:
+            sel = confidence >= lam
+            n = int(sel.sum())
+            k = int((~correct[sel]).sum())
+            ucb = clopper_pearson_upper(k, n, level)
+            if ucb > alpha:
+                break  # a chain stops at its first failure
+            if lam < best.threshold:
+                best = SelectiveRule(float(lam), alpha, delta, len(confidence), n / len(confidence), ucb)
     return best
 
 
@@ -108,6 +124,7 @@ def automation_at_alpha(
     n_splits: int = 100,
     seed: int = 0,
     groups: Sequence[str] | None = None,
+    starts: Sequence[float] | None = DEFAULT_STARTS,
 ) -> dict:
     """Repeated random cal/test splits on one labelled pool.
 
@@ -134,7 +151,7 @@ def automation_at_alpha(
         cut = int(len(members) * cal_fraction)
         cal = np.concatenate([members[j] for j in perm[:cut]])
         test = np.concatenate([members[j] for j in perm[cut:]])
-        rule = calibrate_selective(confidence[cal], correct[cal], alpha, delta)
+        rule = calibrate_selective(confidence[cal], correct[cal], alpha, delta, starts=starts)
         res = apply_selective(rule, confidence[test], correct[test])
         autos.append(res["automation_rate"])
         errs.append(res["selective_error"])

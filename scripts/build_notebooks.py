@@ -247,11 +247,12 @@ md(
     """
 ## Calibrate (where the guarantee comes from)
 
-Half of a calibration carve fits one temperature per question type; the other, disjoint half
-fits the automate/escalate threshold with exact Clopper–Pearson bounds. The result is written
-into `safedecide_config.json` next to the weights. Stage-1 models use the mixed carve
-(jev-distill + typed-decisions); stage-2 models use the typed-decisions carve, the data they
-are fitted for.
+One temperature per question type is fitted first; then a disjoint set of decisions fits the
+automate/escalate threshold with exact Clopper–Pearson bounds and fixed-sequence testing. The
+result is written into `safedecide_config.json` next to the weights. Stage-1 models split the
+mixed carve (jev-distill + typed-decisions) in two halves, one per step. Stage-2 models fit
+their temperatures on the typed-decisions validation carve, so the whole typed-decisions
+calibration carve (600 decisions) sets the threshold.
 
 The model to release is chosen among the stage-2 models here, on calibration data (most
 decisions automated), never on test data.
@@ -266,7 +267,9 @@ GENERAL = {CT_DIR: "SafeDecide general (ConfTr)", BASE_DIR: "SafeDecide general 
 FITTED = {TDCT_DIR: "SafeDecide (ConfTr)", TD_DIR: "SafeDecide (no ConfTr)",
           TDONLY_DIR: "SafeDecide, typed-decisions only"}
 cal = {p: calibrate_checkpoint(p, calib_set, alpha=ALPHA, delta=DELTA) for p in GENERAL}
-cal |= {p: calibrate_checkpoint(p, TD["calibration"], alpha=ALPHA, delta=DELTA) for p in FITTED}
+# Stage 2: temperatures on the typed-decisions validation carve, so all of the calibration carve sets the threshold
+cal |= {p: calibrate_checkpoint(p, TD["calibration"], alpha=ALPHA, delta=DELTA, temperature_set=TD["validation"])
+        for p in FITTED}
 for path, c in cal.items():
     print(path, json.dumps({"temperatures": c["temperatures"], "rule": c["selective_rule"]}, indent=1))
 BEST_DIR = max(FITTED, key=lambda p: (cal[p]["selective_rule"]["calibration_automation"], -cal[p]["val"]["nll"]))

@@ -123,6 +123,12 @@ def test_full_pipeline(tiny, tmp_path):
     config = calibrate_checkpoint(best, synthetic(300, 3), alpha=0.1, delta=0.1)
     assert set(config["temperatures"]) == {"noul", "choice", "score"}
     assert "statement" in config["selective_rule"]
+    cal_set, val_set = synthetic(300, 3), synthetic(60, 2)
+    assert config["calibration"]["n_selective"] < len(cal_set)  # part went to the temperatures
+
+    config = calibrate_checkpoint(best, cal_set, alpha=0.1, delta=0.1, temperature_set=val_set)
+    assert config["calibration"]["n_temperature"] == len(val_set)
+    assert config["calibration"]["n_selective"] == len(cal_set)
 
     decider = SafeDecider.from_pretrained(best, device="cpu")
     resp = decider.decide(

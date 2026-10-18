@@ -30,8 +30,8 @@ statistical guarantee:
 > $statement
 
 The guarantee does **not** rely on the model's probabilities being calibrated.
-It comes from split conformal risk control (exact Clopper–Pearson bounds,
-Bonferroni over a fixed threshold grid) on a held-out calibration set.
+It comes from Learn-then-Test risk control (exact Clopper–Pearson bounds,
+fixed-sequence testing over a fixed threshold grid) on a held-out calibration set.
 
 Code: [github.com/yotambraun/safedecide](https://github.com/yotambraun/safedecide) ·
 raw predictions behind every number: [$results_repo](https://huggingface.co/datasets/$results_repo)

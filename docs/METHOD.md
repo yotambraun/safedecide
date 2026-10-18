@@ -24,17 +24,43 @@ deployment data:
 1. Fix a grid Λ of thresholds *before looking at data* (96 values in [0, 0.999]).
 2. For each λ ∈ Λ: let *n_λ* = number of calibration decisions with c ≥ λ and
    *k_λ* = how many of them are wrong. Compute the exact one-sided
-   Clopper–Pearson upper bound U(λ) at level 1 − δ/|Λ|.
-3. Every λ with U(λ) ≤ α is certified. Choose the smallest certified λ
+   Clopper–Pearson upper bound U(λ).
+3. Test the thresholds by **fixed-sequence testing** from K = 4 starting
+   thresholds fixed in advance (0.99, 0.95, 0.90, 0.80): each chain walks down
+   the grid from its start, certifies λ while U(λ) ≤ α at level 1 − δ/K, and
+   stops at its first failure. Choose the smallest certified λ over all chains
    (the most automation). If none is certified, automate nothing.
 
 **Why it is valid.** For a fixed λ, conditional on *n_λ*, the selected
 calibration decisions are i.i.d. draws from the deployment distribution
 restricted to {c ≥ λ}, so *k_λ ~ Binomial(n_λ, R(λ))* and the Clopper–Pearson
-bound is exact. Bonferroni over the |Λ| pre-specified hypotheses controls the
-probability that *any* certified λ has R(λ) > α at δ (family-wise error), so
-the chosen one is covered. This is the Learn-then-Test framework
-(Angelopoulos, Bates, Candès, Jordan, Lei 2021) with binomial p-values.
+bound is exact. Fixed-sequence testing in an order fixed in advance controls
+the family-wise error of one chain at its level δ/K (each hypothesis is only
+tested after every earlier one in the chain was rejected, so the first true
+null reached is the only way to err, and that test errs with probability
+≤ δ/K). A union bound over the K chains gives probability ≤ δ that *any*
+certified λ has R(λ) > α, so the chosen one is covered. This does not need the
+error to fall monotonically with confidence; monotonicity only makes the
+chains go further. This is the Learn-then-Test framework (Angelopoulos, Bates,
+Candès, Jordan, Lei 2021) with binomial p-values.
+
+Plain Bonferroni over all |Λ| thresholds is also valid, but tests each one at
+δ/|Λ| (here δ/96). On a few hundred calibration decisions it certifies almost
+nothing. `calibrate_selective(..., starts=None)` keeps it for comparison. The
+chain starts were fixed from the jev-distill and stage-1 predictions, before
+any stage-2 result was scored with them.
+
+**Known weakness.** A chain stops at its first failure. If error rises in a
+band of high confidence (say 0.93–0.97), every chain that walks through the
+band stops there, and the thresholds below it are never tested, even when they
+would pass. The rule stays valid but can automate less than Bonferroni would.
+`test_conformal.py::test_guarantee_holds_when_error_is_not_monotone_in_confidence`
+builds exactly this case: there, fixed-sequence testing certifies a threshold
+in about 25% of calibration draws and Bonferroni in about 66%, with violation
+rates of about 1% and 0%. Testing every threshold at δ with no correction
+violates about 18% of the time (more than δ), so the test can tell a valid rule
+from an invalid one. On our models' real predictions error falls with
+confidence, and fixed-sequence testing automates more (see the results).
 
 **What it does not need:** calibrated probabilities. A badly calibrated model
 still gets a valid guarantee; it just automates less.
@@ -98,11 +124,15 @@ carves; `test` is never used), so their guarantee refers to typed-decisions data
 Stage-1 models use that carve plus the jev-distill `calibration` split, and their
 guarantee refers to the mixture.
 
-1. Split the calibration pool in two disjoint halves.
-2. Half A: one temperature per question kind (noul / choice / score), fitted by NLL.
-3. Half B: the selective threshold of §2 on the temperature-scaled confidences.
+1. Set A: one temperature per question kind (noul / choice / score), fitted by NLL.
+2. Set B: the selective threshold of §2 on the temperature-scaled confidences.
 
-Disjoint halves keep the guarantee valid (the temperature is fixed before §2 sees half B).
+Stage-1 models split their calibration pool into two halves by case (A and B).
+Stage-2 models use the typed-decisions validation carve as A, so the whole
+calibration carve is B (`calibrate_checkpoint(..., temperature_set=...)`); the
+validation carve also picked the checkpoint, which is fine because B is never
+seen before the threshold is set. Disjoint sets keep the guarantee valid (the
+temperatures are fixed before §2 sees B).
 
 ## 7. Evaluation protocol
 

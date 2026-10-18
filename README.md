@@ -116,9 +116,10 @@ safedecide benchmark --model runs/safedecide-conftr/best \
 ## How the guarantee works
 
 For each threshold λ on a grid fixed in advance, an exact Clopper–Pearson upper
-bound on the error among calibration decisions with confidence ≥ λ; a Bonferroni
-correction over the grid; the lowest threshold whose bound is ≤ α wins. This is
-Learn-then-Test (Angelopoulos et al., 2021) with binomial p-values. The model is
+bound on the error among calibration decisions with confidence ≥ λ, tested by
+fixed-sequence testing from four fixed starting thresholds (δ split four ways);
+the lowest certified threshold wins. This is Learn-then-Test (Angelopoulos et
+al., 2021) with binomial p-values. The model is
 trained with proper scoring rules plus Conformal Training (Stutz et al., 2022), which
 pushes it towards confident answers where it can afford them.
 [docs/METHOD.md](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md) has the details and the assumptions.

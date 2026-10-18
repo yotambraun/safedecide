@@ -1,6 +1,7 @@
 import numpy as np
 
 from safedecide.conformal import (
+    DEFAULT_GRID,
     apply_selective,
     automation_at_alpha,
     calibrate_selective,
@@ -33,8 +34,45 @@ def test_selective_guarantee_holds_on_fresh_data():
         rule = calibrate_selective(c_cal, k_cal, alpha, delta)
         res = apply_selective(rule, c_te, k_te)
         violations += int(res["selective_error"] > alpha)
-    # promised: violation probability <= delta (Bonferroni makes it conservative)
+    # promised: violation probability <= delta
     assert violations / trials <= delta
+
+
+def test_guarantee_holds_when_error_is_not_monotone_in_confidence():
+    """Fixed-sequence testing must stay valid where higher confidence is not always safer.
+
+    The scenario is hard enough that skipping the multiple-testing correction
+    breaks the guarantee, so passing here means something.
+    """
+    alpha, delta, trials = 0.05, 0.1, 300
+
+    def draw(n, rng):
+        conf = rng.uniform(0.5, 1.0, n)
+        bump = np.where((conf > 0.93) & (conf < 0.97), 0.08, 0.0)  # a bad band near the top
+        return conf, rng.uniform(0, 1, n) >= 0.4 * (1 - conf) + bump
+
+    rng = np.random.default_rng(7)
+    c_big, k_big = draw(400_000, rng)  # stands in for the population
+
+    def violation_rate(**kwargs):
+        violations = 0
+        for _ in range(trials):
+            c, k = draw(3000, rng)
+            rule = calibrate_selective(c, k, alpha, **kwargs)
+            if np.isfinite(rule.threshold):
+                violations += int((~k_big[c_big >= rule.threshold]).mean() > alpha)
+        return violations / trials
+
+    assert violation_rate(delta=delta) <= delta + 0.03  # Monte Carlo slack
+    # every threshold tested at level delta with no correction: invalid here
+    assert violation_rate(delta=delta * len(DEFAULT_GRID), starts=None) > delta + 0.03
+
+
+def test_fixed_sequence_is_at_least_as_strong_as_bonferroni_here():
+    c, k = _synthetic(600, seed=3)
+    fixed = calibrate_selective(c, k, 0.05, 0.1)
+    bonferroni = calibrate_selective(c, k, 0.05, 0.1, starts=None)
+    assert fixed.calibration_automation >= bonferroni.calibration_automation
 
 
 def test_selective_automates_something_when_model_is_good():

@@ -40,10 +40,15 @@ def calibrate_checkpoint(
     temp_fraction: float = 0.5,
     seed: int = 0,
     output_dir: str | None = None,
+    temperature_set: Sequence[Decision] | None = None,
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
     selective threshold on the other half (disjoint by case, so the guarantee is valid).
     Writes everything into ``safedecide_config.json`` next to the weights.
+
+    With ``temperature_set`` (labelled data disjoint from ``calibration_set``,
+    e.g. the validation split) the temperatures are fitted there and the whole
+    calibration set goes to the threshold.
 
     ``path`` is a local checkpoint or a Hub repo id. A Hub model is first
     downloaded into ``output_dir`` (default: a folder named after the repo), and
@@ -53,7 +58,10 @@ def calibrate_checkpoint(
         path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1])
     decider = SafeDecider.from_pretrained(path)
     cal = list(calibration_set)
-    temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # questions about one case stay together
+    if temperature_set is None:
+        temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # questions about one case stay together
+    else:
+        temp_set, conf_set = list(temperature_set), cal
 
     logits_t = decider.logits(temp_set)
     temps = fit_temperatures(logits_t, [np.array(d.target) for d in temp_set], [d.kind for d in temp_set])
