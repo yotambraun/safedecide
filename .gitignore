@@ -27,3 +27,4 @@ private/
 Thumbs.db
 .idea/
 .vscode/
+.cache/

@@ -471,6 +471,24 @@ for f in ("automation_vs_alpha", "validity", "risk_coverage"):
     display(Image(f"{RES}/typed_decisions_test_{f}.png"))
 """,
 )
+md(
+    cpu,
+    """
+## Automation board: every model Hugging Face scored on typed-decisions
+
+Hugging Face published per-decision results for the models it scored on typed-decisions test
+(public bucket `SaylorTwift/typed-decisions-evals`). The script applies our calibration to
+their confidences and ours, with the same correctness rule and splits for every row. Rows are
+labelled by how each model was trained: zero-shot, fitted on train, or test-exposed.
+""",
+)
+code(
+    cpu,
+    """
+!python scripts/automation_board.py --predictions {RES}/predictions/typed_decisions_test --out {RES}/automation_board
+display(Image(f"{RES}/automation_board.png"))
+""",
+)
 md(cpu, "## Export ONNX (fp32 + int8), parity, CPU latency")
 code(
     cpu,
