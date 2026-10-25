@@ -105,8 +105,12 @@ def _maybe_json(x: Any) -> Any:
     return x
 
 
-def typed_decisions_case_to_decisions(row: dict[str, Any]) -> list[Decision]:
-    """One typed-decisions case (state + 5 questions) -> 5 decisions."""
+def typed_decisions_case_to_decisions(row: dict[str, Any], with_factors: bool = False) -> list[Decision]:
+    """One typed-decisions case (state + 5 questions) -> 5 decisions.
+
+    ``with_factors`` keeps the case's latent ``factors`` in each decision's ``meta``,
+    for auxiliary training questions (:mod:`safedecide.factors`). They are never model input.
+    """
     state = _maybe_json(row["state"])
     state_text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
     questions = _maybe_json(row["questions"])
@@ -151,16 +155,21 @@ def typed_decisions_case_to_decisions(row: dict[str, Any]) -> list[Decision]:
                 meta={"question_id": qid, "gold_label": None if g.get("label") is None else str(g["label"])},
             )
         )
+        if with_factors:
+            out[-1].meta["factors"] = _maybe_json(row.get("factors")) or {}
     return out
 
 
-def load_typed_decisions(split: str = "test", config: str = "all") -> list[Decision]:
+def load_typed_decisions(split: str = "test", config: str = "all", with_factors: bool = False) -> list[Decision]:
+    """``with_factors`` is refused for ``test``: test factors are never loaded, not even unused."""
     from datasets import load_dataset
 
+    if with_factors and split != "train":
+        raise ValueError("factors are only loaded for the train split")
     ds = load_dataset(TYPED_DECISIONS, config, split=split)
     out: list[Decision] = []
     for row in ds:
-        out.extend(d for d in typed_decisions_case_to_decisions(row) if d.target is not None)
+        out.extend(d for d in typed_decisions_case_to_decisions(row, with_factors) if d.target is not None)
     return out
 
 
@@ -194,7 +203,9 @@ def describe(decisions: Iterable[Decision]) -> dict[str, Any]:
     }
 
 
-def typed_decisions_splits(val_frac: float = 0.1, cal_frac: float = 0.1) -> dict[str, list[Decision]]:
+def typed_decisions_splits(
+    val_frac: float = 0.1, cal_frac: float = 0.1, with_factors: bool = False
+) -> dict[str, list[Decision]]:
     """typed-decisions ``train`` carved by case into train / validation / calibration.
 
     The benchmark only ships train and test, and ``test`` is never used for
@@ -202,10 +213,32 @@ def typed_decisions_splits(val_frac: float = 0.1, cal_frac: float = 0.1) -> dict
     caller (training, model selection, calibration) sees the same disjoint parts,
     whatever seed the training run uses.
     """
-    td = load_typed_decisions("train")
+    td = load_typed_decisions("train", with_factors=with_factors)
     val, rest = split_by_group(td, val_frac, seed=TD_SPLIT_SEED)
     cal, train = split_by_group(rest, cal_frac / (1 - val_frac), seed=TD_SPLIT_SEED)
     return {"train": train, "validation": val, "calibration": cal}
+
+
+def k_folds(decisions: Sequence[Decision], k: int, seed: int = 0, key=lambda d: d.state) -> list[list[Decision]]:
+    """``k`` disjoint folds, split by ``key`` (one case never spans two folds)."""
+    groups: dict[str, list[Decision]] = {}
+    for d in decisions:
+        groups.setdefault(key(d), []).append(d)
+    keys = list(groups)
+    random.Random(seed).shuffle(keys)
+    return [[d for g in keys[i::k] for d in groups[g]] for i in range(k)]
+
+
+def typed_decisions_folds(k: int = 5, with_factors: bool = True) -> dict[str, Any]:
+    """Cross-validation folds over typed-decisions ``train``, outside the calibration carve.
+
+    The pool is the train and validation parts of :func:`typed_decisions_splits`
+    (1,080 cases); the calibration carve is returned unchanged (the same 600
+    decisions that certified the released model) and is not in any fold.
+    """
+    splits = typed_decisions_splits(with_factors=with_factors)
+    pool = splits["train"] + splits["validation"]
+    return {"folds": k_folds(pool, k, seed=TD_SPLIT_SEED), "calibration": splits["calibration"]}
 
 
 def load_profile(

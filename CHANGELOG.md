@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `notebooks/03_improve_gpu.ipynb`: chooses the v0.2 training recipe by nested 5-fold
+  cross-validation on typed-decisions `train` (5,400 out-of-fold decisions; the 600-decision
+  calibration carve and `test` stay untouched), refits the winner, seals the result
+  (SHA-256 of a recipe file that records every choice and weight hash), and scores `test`
+  only in a second pass that checks the seal.
+- Training: early stopping (`patience`), a refit stop step that keeps the LR schedule
+  (`stop_step`), training without a validation set, and training-only auxiliary decisions
+  drawn fresh each epoch (`aux_fraction`).
+- `safedecide.factors`: the typed-decisions `factors` of each `train` case as training-only
+  questions. They are never model input, and test-split factors are never loaded.
+- Per-question bias on top of temperature scaling (`question_bias` in
+  `safedecide_config.json`), applied by the predictor and by threshold certification alike.
+- `safedecide.cv`: cross-validation runner with per-fold resume, out-of-fold scoring,
+  paired accuracy differences with case-bootstrap intervals, and the final refit step.
+- `configs/typed_decisions_v2.yaml` (up to 10 epochs, early stopping) and
+  `configs/typed_decisions_large.yaml` (Ettin-encoder-400m).
+
+### Changed
+
+- Colab setup clones the public repository first and uses `GH_TOKEN` only if that fails.
+
 ## [0.1.0] - 2026-10-18
 
 ### Added

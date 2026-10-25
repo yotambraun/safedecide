@@ -1,0 +1,20 @@
+# Stage 2, v0.2 schedule: the v0.1 runs were still improving at their last step (best = step
+# 1,092 of 1,092), so up to 10 epochs here, stopped when the validation NLL has not improved
+# for 5 evaluations (2 epochs). Chosen by cross-validation in notebooks/03_improve_gpu.ipynb.
+run_name: safedecide-td-v2
+base_model: jhu-clsp/mmBERT-small
+profile: clean
+max_length: 640         # no truncation: the longest typed-decisions input is 604 tokens
+max_pairs_per_batch: 64
+grad_accum: 1
+epochs: 10
+patience: 5
+lr: 3.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.06
+w_brier: 0.5
+w_rps: 0.5
+w_conftr: 0.0
+eval_every: 100
+val_max: 3000
+seed: 42

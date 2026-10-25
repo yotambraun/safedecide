@@ -26,15 +26,16 @@ os.makedirs(f"{OUT}/results", exist_ok=True)
 REPO = "yotambraun/safedecide"
 SRC = "/content/safedecide"
 if not os.path.exists(SRC):
-    try:
-        token = userdata.get("GH_TOKEN")             # only needed while the GitHub repo is private
+    public = f"https://github.com/{REPO}.git"
+    branch = ["-b", BRANCH] if globals().get("BRANCH") else []  # set by notebooks that run a branch
+    r = subprocess.run(["git", "clone", "-q", *branch, public, SRC], capture_output=True, text=True)
+    if r.returncode:                                 # the GitHub repo was private before launch
+        token = userdata.get("GH_TOKEN")
         url = f"https://x-access-token:{token}@github.com/{REPO}.git"
-    except Exception:
-        url = f"https://github.com/{REPO}.git"
-    r = subprocess.run(["git", "clone", "-q", url, SRC], capture_output=True, text=True)
+        r = subprocess.run(["git", "clone", "-q", *branch, url, SRC], capture_output=True, text=True)
     if r.returncode:
-        raise RuntimeError("git clone failed: check the GH_TOKEN secret and that 'Notebook access' is on")
-    subprocess.run(["git", "-C", SRC, "remote", "set-url", "origin", f"https://github.com/{REPO}.git"], check=True)
+        raise RuntimeError(f"git clone failed: {r.stderr.strip()}")
+    subprocess.run(["git", "-C", SRC, "remote", "set-url", "origin", public], check=True)
 print(subprocess.run(["git", "-C", SRC, "log", "-1", "--format=%h %s"], capture_output=True, text=True).stdout)
 """
 
@@ -698,6 +699,535 @@ md(
 )
 
 
+# --------------------------------------------------------------------------- #
+# 03: GPU (paid). v0.2: choose the recipe by cross-validation, refit, seal, then score test.
+# --------------------------------------------------------------------------- #
+imp: list = []
+md(
+    imp,
+    """
+# SafeDecide v0.2: choose the recipe on train, refit, seal, then score test (GPU)
+
+v0.1's training runs were still improving at their last step (best checkpoint = last step,
+for stage 1 and stage 2). This notebook tests, on typed-decisions `train` only, whether
+these help, and keeps only what does:
+
+| Recipe | What changes |
+|---|---|
+| `r0-old-schedule` | v0.1's stage 2 (4 epochs), the baseline |
+| `r1-long` | up to 10 epochs, stopped when the validation NLL stops improving |
+| `r1-long-s1x2` | the same, on a stage 1 trained twice as long |
+| `r2-factors` | the better r1, plus training-only questions about each case's `factors` |
+| `+ per-question bias` | one bias per question and option, fitted on held-out predictions |
+
+**Honest by construction.**
+- Every choice is made by 5-fold cross-validation on the 1,080 `train` cases outside the
+  calibration carve: 5,400 out-of-fold decisions, about ±0.6 accuracy points.
+- Inside each fold, a 10% inner carve picks the checkpoint, so the held-out fold is only
+  predicted, never used to choose anything.
+- Stage 1 never sees typed-decisions in this notebook, so no fold leaks into it.
+- The 600 calibration decisions that certified v0.1 stay untouched until the final
+  threshold. **`test` is not loaded until `SCORE_TEST = True`.**
+
+**Two passes.**
+1. *Pass 1* (`SCORE_TEST = False`): everything up to the final models and a **seal**, the
+   SHA-256 of `recipe.json`, which records the choices and the hash of every weight file.
+   Post the seal line in discussion #39 before pass 2.
+2. *Pass 2* (`SCORE_TEST = True`, Run all again): everything above is reused from Drive. It
+   checks the seal, scores `test` once, and writes the results. About 10 minutes.
+
+**Budget.** A100 at 5.3 units/hour, as measured on 2026-10-17. Estimated from v0.1's measured
+speed: about 3 to 5 hours and under 25 units for the 140M part. The cost cell measures this GPU
+and prints the upper bound before anything trains. The 400M model is measured separately and
+trains only if its upper bound is at most `MAX_UNITS_LARGE`. Every finished run and fold is saved to Drive, so after a disconnect, Run
+all continues where it stopped.
+
+**Before you run.**
+1. *Runtime → Change runtime type → A100 GPU → Save.*
+2. No secrets needed: the code, the data and the base models are all public.
+3. Keep this tab open and the computer awake and plugged in.
+4. *Runtime → Run all.* At the end the runtime disconnects itself. After that, don't click
+   *Connect*, because that starts a new A100.
+5. Download `MyDrive/safedecide/v2/report` (no weights in it) and send it.
+""",
+)
+md(imp, "## Setup")
+code(
+    imp,
+    'BRANCH = "v0.2-recipe"  # the code this notebook was written for\n'
+    + SETUP
+    + '%pip install -q "/content/safedecide[all]"\n%cd /content/safedecide\n',
+)
+code(
+    imp,
+    r"""
+import dataclasses
+import datetime
+import hashlib
+import json
+import shutil
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+from IPython.display import Markdown, display
+from transformers.utils import logging as hf_logging
+
+hf_logging.disable_progress_bar()  # one "Loading weights" bar per model load buries the output
+
+SCORE_TEST = False  # pass 1: False. Pass 2, after posting the seal in discussion #39: True
+RUN_LARGE = True  # also fit Ettin-encoder-400m, if its measured cost fits MAX_UNITS_LARGE
+MAX_UNITS_LARGE = 12
+UNITS_PER_HOUR = 5.3  # A100, from this account's Resources panel (2026-10-17)
+PROFILE = "clean"
+K = 5
+S1_STEPS = {"s1-3355": 3355, "s1-6710": 6710}  # v0.1's stage 1 ran 3,355 steps and was still improving
+TD_ALPHA, DELTA = 0.10, 0.10  # the release's default error budget, 1 - confidence in that promise
+DISCONNECT_WHEN_DONE = True
+
+assert torch.cuda.is_available(), "No GPU: Runtime > Change runtime type > A100 GPU"
+GPU = torch.cuda.get_device_name(0)
+if "A100" not in GPU:
+    print(f"Note: {GPU}. The unit estimates assume an A100 at {UNITS_PER_HOUR} units/hour.")
+V2 = f"{OUT}/v2"  # v0.1's runs and results on Drive are not touched
+RUNS, RES, REPORT = f"{V2}/runs", f"{V2}/results", f"{V2}/report"
+CV_DIR = f"{REPORT}/cv"  # out-of-fold predictions, small, part of what you download
+RECIPE = f"{REPORT}/recipe.json"  # written once, by the seal cell
+WORK = "/content/work"  # fold checkpoints: local disk only, deleted after each fold
+for p in (RUNS, RES, CV_DIR):
+    os.makedirs(p, exist_ok=True)
+T0 = time.time()
+print(GPU)
+""",
+)
+md(
+    imp,
+    """
+## Data
+
+typed-decisions `train`: five folds by case over the 1,080 cases outside the calibration carve,
+plus the carve itself, checked to be the same 600 decisions as v0.1's. Stage 1 uses jev-distill
+`openjev_v2` alone (CC0 at source).
+""",
+)
+code(
+    imp,
+    r"""
+from safedecide.data import load_profile, split_by_group, typed_decisions_folds, typed_decisions_splits
+from safedecide.factors import factor_decisions, factor_vocabulary
+
+F = typed_decisions_folds(K)
+FOLDS, CAL = F["folds"], F["calibration"]
+POOL = [d for f in FOLDS for d in f]
+assert [d.id for d in CAL] == [d.id for d in typed_decisions_splits()["calibration"]]  # v0.1's 600 decisions
+assert {d.state for d in CAL}.isdisjoint({d.state for d in POOL})
+VOCAB = factor_vocabulary(POOL)  # which factors become questions, and their options
+NEED_STAGE1 = not all(os.path.exists(f"{RUNS}/{n}/train_summary.json") for n in S1_STEPS)
+jev_train = load_profile(PROFILE, "train", seed=42, include_typed_decisions=False) if NEED_STAGE1 else []
+jev_val = load_profile(PROFILE, "validation", max_rows=3000, seed=42, include_typed_decisions=False) if NEED_STAGE1 else []
+print(json.dumps({"folds": [len(f) for f in FOLDS], "calibration": len(CAL), "factor_questions": len(VOCAB),
+                  "factor_decisions": len(factor_decisions(POOL, VOCAB)), "stage1_train": len(jev_train),
+                  "stage1_validation": len(jev_val)}, indent=1))
+""",
+)
+md(
+    imp,
+    """
+## Cost, measured before anything trains
+
+30 steps of each kind on this GPU, then an upper bound for every run (stage 2 at its full 10
+epochs; early stopping usually ends sooner). Runs already on Drive still appear in the table;
+they will be reused, not paid again. If the total looks too high, stop the runtime now. Skipped
+once everything is sealed.
+""",
+)
+code(
+    imp,
+    r"""
+from safedecide.train import TrainConfig, steps_per_epoch, train
+
+
+def show_cost(SEC, it):
+    v2cfg = TrainConfig.from_yaml("configs/typed_decisions_v2.yaml")
+    spe = steps_per_epoch(v2cfg, it)
+    spe_aux = steps_per_epoch(dataclasses.replace(v2cfg, aux_fraction=0.5), it, factor_decisions(it, VOCAB))
+    spe_full = steps_per_epoch(dataclasses.replace(v2cfg, aux_fraction=0.5), POOL, factor_decisions(POOL, VOCAB))
+    plan = {
+        "stage 1, 3,355 steps": 3355 * SEC["stage 1"],
+        "stage 1, 6,710 steps": 6710 * SEC["stage 1"],
+        "CV r0-old-schedule (4 epochs x 5 folds)": K * 4 * spe * SEC["stage 2"],
+        "CV r1-long (<= 10 epochs x 5 folds)": K * 10 * spe * SEC["stage 2"],
+        "CV r1-long-s1x2 (<= 10 epochs x 5 folds)": K * 10 * spe * SEC["stage 2"],
+        "CV r2-factors (<= 10 epochs x 5 folds)": K * 10 * spe_aux * SEC["stage 2"],
+        "final 140M refit (<= 10 epochs)": 10 * spe_full * SEC["stage 2"],
+    }
+    rows = [f"| {k} | {v * OVERHEAD / 60:.0f} | {v * OVERHEAD / 3600 * UNITS_PER_HOUR:.1f} |" for k, v in plan.items()]
+    total = sum(plan.values()) * OVERHEAD
+    note = "" if SEC["stage 1"] else " Stage 1 is already on Drive (0 here)."
+    display(Markdown("| Run | Minutes (upper bound) | Units |\n|---|---|---|\n" + "\n".join(rows)
+                     + f"\n| **140M total** | **{total / 60:.0f}** | **{total / 3600 * UNITS_PER_HOUR:.1f}** |"
+                     + f"\n\nMeasured: {SEC['stage 1']:.3f} s/step (stage 1), {SEC['stage 2']:.3f} s/step (stage 2)."
+                     + note + " The 400M model is measured separately, before it trains."))
+
+
+def probe(config, data, val, **kw):
+    cfg = TrainConfig.from_yaml(config, run_name="probe", profile=PROFILE, output_dir="/content/probe", **kw)
+    cfg.max_steps, cfg.epochs, cfg.eval_every, cfg.patience = 30, 1000, 10**9, None  # exactly 30 steps
+    s = train(cfg, data, val[:16])
+    shutil.rmtree("/content/probe", ignore_errors=True)
+    return s["train_step_seconds"] or s["seconds_per_step"]
+
+
+OVERHEAD = 1.3  # evaluations, model loading, predictions (v0.1 stage 2: 0.305 s per step all-in, 0.22 training)
+if os.path.exists(RECIPE):
+    print("Everything is trained and sealed: nothing to measure.")
+else:
+    iv, it = split_by_group([d for f in FOLDS[1:] for d in f], 0.1, seed=0)  # one fold's inner split
+    SEC = {"stage 1": probe("configs/base.yaml", jev_train, jev_val) if NEED_STAGE1 else 0.0,
+           "stage 2": probe("configs/typed_decisions_v2.yaml", it, iv)}
+    show_cost(SEC, it)
+""",
+)
+md(
+    imp,
+    """
+## Stage 1, twice: v0.1's length and twice as long
+
+General decision training on jev-distill alone. The learning-rate schedule is sized to each
+run's step count, as in v0.1.
+""",
+)
+code(
+    imp,
+    r"""
+def stage1(name, steps):
+    done = f"{RUNS}/{name}"
+    if os.path.exists(f"{done}/train_summary.json"):
+        print(f"{name}: trained earlier, reused")
+        return done
+    cfg = TrainConfig.from_yaml("configs/base.yaml", run_name=name, profile=PROFILE, output_dir=WORK, epochs=10)
+    cfg.max_steps = steps
+    summary = train(cfg, jev_train, jev_val)
+    shutil.copytree(summary["best_dir"], done, dirs_exist_ok=True)
+    json.dump(summary, open(f"{done}/train_summary.json", "w"), indent=1)  # written last: marks the run done
+    return done
+
+
+S1 = {name: stage1(name, steps) for name, steps in S1_STEPS.items()}
+for name, path in S1.items():
+    h = json.load(open(f"{path}/train_summary.json"))["history"]
+    print(name, "validation NLL by step:", [(r["step"], round(r["nll"], 4)) for r in h[-4:]])
+""",
+)
+md(
+    imp,
+    """
+## Cross-validation, round 1: the schedule and the stage-1 length
+
+Out-of-fold scores, each decision predicted by the one model that never saw its case.
+The gain column is paired, on the same decisions, with a 95% bootstrap interval over cases.
+""",
+)
+code(
+    imp,
+    r"""
+from safedecide.cv import comparison_table, cross_validate, oof_probs, score
+
+
+def v2(init, **kw):
+    return TrainConfig.from_yaml("configs/typed_decisions_v2.yaml", init_from=init, output_dir=WORK, **kw)
+
+
+RECIPES = {  # name -> (config, factor vocabulary or None)
+    "r0-old-schedule": (TrainConfig.from_yaml("configs/typed_decisions.yaml", init_from=S1["s1-3355"],
+                                              output_dir=WORK, eval_every=100), None),
+    "r1-long": (v2(S1["s1-3355"]), None),
+    "r1-long-s1x2": (v2(S1["s1-6710"]), None),
+}
+CV = {name: cross_validate(name, cfg, FOLDS, CV_DIR, WORK, vocab) for name, (cfg, vocab) in RECIPES.items()}
+PROBS = {name: oof_probs(cv, POOL) for name, cv in CV.items()}
+
+
+def acc(name):
+    return score(PROBS[name], POOL)["overall"]["accuracy"]
+
+
+display(Markdown(comparison_table(PROBS, POOL, "r0-old-schedule")))
+""",
+)
+md(
+    imp,
+    """
+## Cross-validation, round 2: factor questions
+
+The better of the two r1 recipes, plus about one training-only factor question for every two
+real decisions in each epoch. The held-out fold is scored on its real questions only.
+""",
+)
+code(
+    imp,
+    r"""
+BASE_R1 = max(["r1-long", "r1-long-s1x2"], key=acc)
+RECIPES["r2-factors"] = (dataclasses.replace(RECIPES[BASE_R1][0], aux_fraction=0.5), VOCAB)
+CV["r2-factors"] = cross_validate("r2-factors", RECIPES["r2-factors"][0], FOLDS, CV_DIR, WORK, VOCAB)
+PROBS["r2-factors"] = oof_probs(CV["r2-factors"], POOL)
+print(f"r2-factors starts from {BASE_R1}'s stage 1")
+display(Markdown(comparison_table(PROBS, POOL, "r0-old-schedule")))
+""",
+)
+md(
+    imp,
+    """
+## Per-question bias, and the choice
+
+The bias is fitted on four folds' out-of-fold predictions and applied to the fifth, so its
+gain is measured on cases it never saw. The recipe with the highest out-of-fold accuracy is
+chosen. The bias is kept only if it raises that accuracy without raising KL.
+""",
+)
+code(
+    imp,
+    r"""
+from safedecide.cv import crossfit_bias
+
+BEST = max(CV, key=acc)
+BIASED = f"{BEST} + per-question bias"
+PROBS[BIASED] = crossfit_bias(CV[BEST], POOL)
+with_b, without_b = score(PROBS[BIASED], POOL)["overall"], score(PROBS[BEST], POOL)["overall"]
+USE_BIAS = with_b["accuracy"] > without_b["accuracy"] and with_b["kl_from_gold"] <= without_b["kl_from_gold"]
+SELECTION = comparison_table(PROBS, POOL, "r0-old-schedule") + (
+    f"\n**Chosen:** `{BEST}`" + (" + per-question bias" if USE_BIAS else ", without the per-question bias")
+    + ". Rule: highest out-of-fold accuracy; the bias only if it raises accuracy without raising KL.\n"
+)
+open(f"{REPORT}/selection.md", "w").write(SELECTION)
+display(Markdown(SELECTION))
+""",
+)
+md(
+    imp,
+    """
+## Final 140M model
+
+The chosen recipe, refit once on all 1,080 cases, stopped at the folds' median best epoch.
+Temperatures are the mean of the folds' (each fitted on its inner carve), and the bias, if kept,
+is fitted on all out-of-fold predictions. Then the threshold is certified at 5%, 10% and 20% on
+the untouched calibration carve.
+""",
+)
+code(
+    imp,
+    r"""
+from safedecide.cv import bias_from_cv, mean_temperatures, refit_step
+from safedecide.hub import rules_table
+from safedecide.pipeline import calibrate_checkpoint, load_config
+from safedecide.predict import CONFIG_NAME
+
+
+def certified(path):
+    return os.path.exists(f"{path}/{CONFIG_NAME}") and "selective_rules" in load_config(path)
+
+
+def save_config(path, c):
+    json.dump(c, open(f"{path}/{CONFIG_NAME}", "w"), indent=2)
+
+
+def refit_140m(name):
+    done = f"{RUNS}/{name}"
+    if certified(done):
+        print(f"{name}: fitted and certified earlier, reused")
+        return done
+    cfg, vocab = RECIPES[BEST]
+    aux = factor_decisions(POOL, vocab) if vocab else []
+    stop = refit_step(CV[BEST], cfg, POOL, aux)
+    summary = train(dataclasses.replace(cfg, run_name=name, stop_step=stop, patience=None), POOL, [], aux_set=aux)
+    shutil.copytree(summary["best_dir"], done, dirs_exist_ok=True)
+    json.dump(summary, open(f"{done}/train_summary.json", "w"), indent=1)
+    c = load_config(done)
+    c["temperatures"] = mean_temperatures(CV[BEST])
+    if USE_BIAS:
+        c["question_bias"] = bias_from_cv(CV[BEST], POOL)
+    c["recipe"] = {"chosen_by": "5-fold cross-validation on typed-decisions train", "recipe": BEST,
+                   "stop_step": stop, "factor_questions": bool(vocab), "question_bias": USE_BIAS,
+                   "trained_on": f"typed-decisions train outside the calibration carve ({len({d.state for d in POOL}):,} cases)",
+                   "stage1": Path(cfg.init_from).name}
+    save_config(done, c)
+    calibrate_checkpoint(done, CAL, alpha=TD_ALPHA, delta=DELTA, keep_temperatures=True)
+    return done
+
+
+FINAL = {"SafeDecide-140M v0.2": refit_140m("final-140m")}
+cfg140 = load_config(FINAL["SafeDecide-140M v0.2"])
+display(Markdown(rules_table(cfg140["selective_rules"], cfg140["selective_rule"]["alpha"])))
+""",
+)
+md(
+    imp,
+    """
+## Optional: Ettin-encoder-400m
+
+The same stage-2 recipe straight from Ettin-encoder-400m (MIT), with no stage 1 and no
+cross-validation (5 folds would cost several times more). It trains once on 90% of the
+1,080 cases, with early stopping and temperatures on the other 10%, and is certified on the
+same calibration carve. It is part of the seal, so it is reported whatever it scores. Its
+cost is measured first; it trains only if `RUN_LARGE` and the upper bound is at most
+`MAX_UNITS_LARGE` units.
+""",
+)
+code(
+    imp,
+    r"""
+LARGE_DIR, LARGE_SKIP = f"{RUNS}/final-400m", f"{RUNS}/final-400m-skipped.json"
+if certified(LARGE_DIR):
+    FINAL["SafeDecide-400M v0.2"] = LARGE_DIR
+    print("final-400m: fitted and certified earlier, reused")
+elif os.path.exists(RECIPE):
+    print("Sealed without a 400M model:", open(LARGE_SKIP).read() if os.path.exists(LARGE_SKIP) else "RUN_LARGE was off")
+elif RUN_LARGE:
+    cfg_l = TrainConfig.from_yaml("configs/typed_decisions_large.yaml", run_name="final-400m", output_dir=WORK,
+                                  aux_fraction=RECIPES[BEST][0].aux_fraction)
+    vocab_l = RECIPES[BEST][1]
+    val_l, train_l = split_by_group(POOL, 0.1, seed=0)
+    aux_l = factor_decisions(train_l, vocab_l) if vocab_l else []
+    sec_l = probe("configs/typed_decisions_large.yaml", train_l, val_l)
+    upper = 10 * steps_per_epoch(cfg_l, train_l, aux_l) * sec_l * OVERHEAD
+    units = upper / 3600 * UNITS_PER_HOUR
+    print(f"400M: {sec_l:.2f} s/step measured; at most {upper / 60:.0f} min, {units:.1f} units")
+    if units > MAX_UNITS_LARGE:
+        print(f"Skipped: above MAX_UNITS_LARGE = {MAX_UNITS_LARGE}. Raise it and Run all to fit it.")
+        json.dump({"seconds_per_step": sec_l, "upper_bound_units": units, "max_units": MAX_UNITS_LARGE},
+                  open(LARGE_SKIP, "w"))
+    else:
+        summary = train(cfg_l, train_l, val_l, aux_set=aux_l)
+        shutil.copytree(summary["best_dir"], LARGE_DIR, dirs_exist_ok=True)
+        json.dump(summary, open(f"{LARGE_DIR}/train_summary.json", "w"), indent=1)
+        c = load_config(LARGE_DIR)
+        c["recipe"] = {"chosen_by": "the 140M model's cross-validated recipe, fixed in advance",
+                       "recipe": BEST, "factor_questions": bool(vocab_l), "question_bias": False,
+                       "trained_on": f"90% of typed-decisions train outside the calibration carve ({len({d.state for d in train_l}):,} cases)",
+                       "stage1": None}
+        save_config(LARGE_DIR, c)
+        calibrate_checkpoint(LARGE_DIR, CAL, alpha=TD_ALPHA, delta=DELTA, temperature_set=val_l)
+        FINAL["SafeDecide-400M v0.2"] = LARGE_DIR
+else:
+    print("RUN_LARGE is False: no 400M model")
+""",
+)
+md(
+    imp,
+    """
+## Seal
+
+`recipe.json` records the code commit, every out-of-fold score, the choice, and the SHA-256 of
+each final model's weights and configuration (thresholds included). Its own SHA-256 is the
+seal. Pass 2 refuses to score `test` if any of it has changed.
+""",
+)
+code(
+    imp,
+    r"""
+import subprocess
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+MODELS = {name: {"weights_sha256": sha256(f"{p}/model.safetensors"), "config_sha256": sha256(f"{p}/{CONFIG_NAME}"),
+                 "recipe": load_config(p)["recipe"], "drive_dir": p} for name, p in FINAL.items()}
+if not os.path.exists(RECIPE):
+    doc = {
+        "what": "SafeDecide v0.2, typed-decisions: choices made on train only, sealed before test was scored",
+        "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "code_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
+        "selection": {"out_of_fold": {n: score(p, POOL)["overall"] for n, p in PROBS.items()},
+                      "chosen": BEST, "question_bias": USE_BIAS},
+        "models": MODELS,
+    }
+    open(RECIPE, "w").write(json.dumps(doc, indent=1, sort_keys=True))
+else:
+    sealed = json.load(open(RECIPE))["models"]
+    assert sealed == MODELS, "a final model changed after it was sealed; do not score test with it"
+SEAL = sha256(RECIPE)
+display(Markdown(f"**Seal:** `{SEAL}`\n\nPost this line in discussion #39 before pass 2:\n\n"
+                 f"> SafeDecide v0.2 is fixed before scoring test: SHA-256 `{SEAL}` of `recipe.json`, "
+                 f"which I'll publish with the results."))
+""",
+)
+md(
+    imp,
+    """
+## Score `test` (pass 2 only)
+
+Once, for each sealed model, with v0.1 next to it for a paired comparison on the same 2,000
+decisions (v0.1's predictions come from notebook 1's results on Drive).
+""",
+)
+code(
+    imp,
+    r"""
+if not SCORE_TEST:
+    print("test not loaded. Post the seal in #39, then set SCORE_TEST = True and Run all again.")
+else:
+    from safedecide.adapters import LocalAdapter
+    from safedecide.cv import paired_accuracy_delta
+    from safedecide.data import load_typed_decisions
+    from safedecide.pipeline import benchmark, save_predictions, save_results, shipped_rule_check
+    from safedecide.report import markdown_table
+    from safedecide.typed_decisions import markdown_table as td_table
+    from safedecide.typed_decisions import score_typed_decisions
+
+    assert sha256(RECIPE) == SEAL
+    td_test = load_typed_decisions("test")
+    probs = {}
+    v01 = f"{OUT}/results/predictions/typed_decisions_test/safedecide-no-conftr.jsonl"  # notebook 1's file
+    if os.path.exists(v01):
+        old = {r["id"]: np.array(r["probs"]) for r in map(json.loads, open(v01))}
+        probs["SafeDecide-140M v0.1"] = [old[d.id] for d in td_test]
+    shipped, results = {}, []
+    for name, path in FINAL.items():
+        adapter = LocalAdapter(path, name=name)
+        probs[name] = adapter.predict_proba(td_test)
+        save_predictions(RES, "typed_decisions_test", name, td_test, probs[name])
+        shipped[name] = shipped_rule_check(path, td_test)
+    for name, p in probs.items():
+        results.append(benchmark(None, td_test, delta=DELTA, probs=p, name=name))
+    scores = {name: score_typed_decisions(p, td_test) for name, p in probs.items()}
+    base = probs.get("SafeDecide-140M v0.1")
+    gains = {name: paired_accuracy_delta(probs[name], base, td_test) for name in FINAL} if base else {}
+    json.dump(scores, open(f"{RES}/typed_decisions_official.json", "w"), indent=1)
+    save_results(results, f"{RES}/typed_decisions_test.json")
+    json.dump({"seal": SEAL, "shipped_rule": shipped, "paired_vs_v0.1": gains}, open(f"{RES}/run_info.json", "w"),
+              indent=1)
+    report = (f"### typed-decisions test ({len(td_test):,} decisions)\n\n" + td_table(scores)
+              + "\n\n### Accuracy gain over v0.1, paired (95% CI over cases)\n\n"
+              + "\n".join(f"- {n}: {g['delta']:+.4f} [{g['lo']:+.4f}, {g['hi']:+.4f}]" for n, g in gains.items())
+              + "\n\n### Shipped 10% threshold, applied unchanged\n\n"
+              + "\n".join(f"- {n}: {s['automation_rate']:.1%} automated, {s['selective_error']:.1%} of those wrong"
+                          for n, s in shipped.items())
+              + f"\n\n### Automation at a certified error <= {TD_ALPHA:.0%}\n\n" + markdown_table(results, TD_ALPHA))
+    open(f"{REPORT}/test_results.md", "w").write(report)
+    shutil.copy(f"{RES}/typed_decisions_official.json", REPORT)
+    display(Markdown(report))
+""",
+)
+md(imp, "## Done: free the GPU")
+code(
+    imp,
+    r"""
+print(f"GPU time used by this notebook: {(time.time() - T0) / 60:.0f} min. Download {REPORT} and send it.")
+if DISCONNECT_WHEN_DONE:
+    from google.colab import runtime
+
+    runtime.unassign()
+""",
+)
+
+
 def write(cells, name, gpu_type=None):
     meta = {
         "colab": {"provenance": []},
@@ -716,6 +1246,7 @@ def write(cells, name, gpu_type=None):
 
 write(gpu, "01_train_gpu.ipynb", gpu_type="A100")
 write(pub, "02_publish.ipynb", gpu_type="T4")
+write(imp, "03_improve_gpu.ipynb", gpu_type="A100")
 
 # Same formatting as the rest of the repo (ruff formats notebook cells too).
 subprocess.run([sys.executable, "-m", "ruff", "format", "-q", str(ROOT / "notebooks")], check=True)

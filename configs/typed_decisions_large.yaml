@@ -1,0 +1,21 @@
+# Stage 2 straight from Ettin-encoder-400m (MIT; no stage 1), with the v0.2 schedule.
+# Its transformer layers are about 8x mmBERT-small's (mmBERT-small's 140M is mostly its
+# 256k-token vocabulary), hence gradient checkpointing and half-size micro-batches.
+run_name: safedecide-td-large
+base_model: jhu-clsp/ettin-encoder-400m
+profile: clean
+max_length: 640
+max_pairs_per_batch: 32
+grad_accum: 2           # 64 option pairs per optimizer step, as for the 140M model
+epochs: 10
+patience: 5
+lr: 3.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.06
+w_brier: 0.5
+w_rps: 0.5
+w_conftr: 0.0
+eval_every: 100
+val_max: 3000
+gradient_checkpointing: true
+seed: 42

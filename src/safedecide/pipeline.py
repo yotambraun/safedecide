@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .calibration import fit_temperatures, softmax_np
+from .calibration import calibrated_probs, fit_temperatures
 from .conformal import (
     apply_selective,
     automation_at_alpha,
@@ -82,8 +82,8 @@ def calibrate_checkpoint(
         logits_t = decider.logits(temp_set)
         temps = fit_temperatures(logits_t, [np.array(d.target) for d in temp_set], [d.kind for d in temp_set])
 
-    logits_c = decider.logits(conf_set)
-    probs_c = [softmax_np(z, temps[d.kind]) for z, d in zip(logits_c, conf_set)]
+    # the probabilities the predictor will serve: temperatures, plus the per-question bias if the model has one
+    probs_c = calibrated_probs(decider.logits(conf_set), conf_set, temps, decider.question_bias)
     conf = top_confidence(probs_c)
     correct = np.array([int(p.argmax()) == d.label for p, d in zip(probs_c, conf_set)])
     rules = []

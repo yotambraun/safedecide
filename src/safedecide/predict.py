@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .calibration import softmax_np
+from .calibration import calibrated_probs
 from .model import autocast_dtype, forward_decisions, load_backbone, make_batches
 from .schema import Decision, decisions_from_systemone_request
 
@@ -65,6 +65,11 @@ class SafeDecider:
     def temperatures(self) -> dict[str, float]:
         return self.config.get("temperatures", {"noul": 1.0, "choice": 1.0, "score": 1.0})
 
+    @property
+    def question_bias(self) -> dict[str, list[float]]:
+        """Per-question option biases, keyed by :func:`safedecide.calibration.question_key` (often empty)."""
+        return self.config.get("question_bias") or {}
+
     def rule(self, alpha: float | None = None) -> dict:
         """The certified rule at error level ``alpha`` (default: the one saved as default)."""
         default = self.config.get("selective_rule") or {}
@@ -100,8 +105,9 @@ class SafeDecider:
         return out  # type: ignore[return-value]
 
     def predict_proba(self, decisions: Sequence[Decision], calibrated: bool = True) -> list[np.ndarray]:
-        temps = self.temperatures if calibrated else {}
-        return [softmax_np(z, temps.get(d.kind, 1.0)) for z, d in zip(self.logits(decisions), decisions)]
+        if not calibrated:
+            return calibrated_probs(self.logits(decisions), decisions, {})
+        return calibrated_probs(self.logits(decisions), decisions, self.temperatures, self.question_bias)
 
     # ---------------------------------------------------- System One API
     def decide(self, request: dict[str, Any], alpha: float | None = None) -> dict[str, Any]:

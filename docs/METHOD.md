@@ -122,7 +122,9 @@ the state; output = one logit. Softmax over a question's options.
   on the other half, penalise expected set size above 1. Turned on after 30% of
   training so the model first learns sensible probabilities.
 
-Model selection: best validation **NLL** (a proper score), not accuracy.
+Model selection: best validation **NLL** (a proper score), not accuracy. Since v0.2,
+training stops early once the validation NLL has not improved for 5 evaluations
+(`patience`), and the recipe itself is chosen by cross-validation (§8).
 
 **Two stages.** Stage 1 trains on jev-distill `openjev_v2` plus the typed-decisions
 train carve (384 tokens). Stage 2 starts from the stage-1 baseline and fits the
@@ -188,6 +190,36 @@ automation on B would reuse the data behind its guarantee.
   its own engine with each question's instructions and criteria, as in its
   published evaluation; only reported if our harness reproduces its published
   accuracy within one point. Prior and Uniform reference rows as in the benchmark.
+
+## 8. Choosing a recipe without test (v0.2)
+
+v0.1 picked its checkpoint on a 600-decision validation carve, where accuracy
+moves by ±1.5 points between evaluations, and every v0.1 run was still improving
+at its last step. v0.2 changes are chosen in `notebooks/03_improve_gpu.ipynb`:
+
+* **Nested 5-fold cross-validation** over the 1,080 typed-decisions `train` cases
+  outside the calibration carve. In fold *i*, a 10% inner carve of the other folds
+  picks the checkpoint (early stopping on NLL) and fits the temperatures; fold *i*
+  is only predicted. The 5,400 out-of-fold decisions score every candidate, and
+  differences are paired, with 95% intervals from resampling whole cases.
+* **Stage 1 without typed-decisions**, so no fold leaks into the starting point.
+* **Candidates**: v0.1's stage-2 schedule; up to 10 epochs with early stopping;
+  the same on a stage 1 trained twice as long; the better of those plus *factor
+  questions*; and a per-question bias (fitted on four folds, applied to the fifth).
+  The highest out-of-fold accuracy wins; the bias is kept only if it raises
+  accuracy without raising KL.
+* **Factor questions.** Each `train` case records the latent facts it was
+  generated from. During training only, each usable fact (yes/no, a category of
+  at most 15 short values, or an integer with at most 10 levels: 31 across the four
+  workflows) becomes one more question about the same state with a one-hot target.
+  They are never model input, and test-split factors are never loaded.
+* **Refit**: the winner is trained once on all 1,080 cases with the same LR
+  schedule, stopped at the folds' median best epoch. Temperatures are the folds'
+  mean, and the threshold is certified on the untouched calibration carve, as in §6.
+* **Seal**: before `test` is loaded, a recipe file records the code commit, every
+  out-of-fold score, the choice and the SHA-256 of each final model's weights and
+  configuration. Its hash is posted publicly, and the scoring pass refuses to run
+  if any of it has changed.
 
 ## References
 
