@@ -737,7 +737,8 @@ these help, and keeps only what does:
    checks the seal, scores `test` once, and writes the results. About 10 minutes.
 
 **Budget.** A100 at 5.3 units/hour, as measured on 2026-10-17. Estimated from v0.1's measured
-speed: about 3 to 5 hours and under 25 units for the 140M part. The cost cell measures this GPU
+speed: at most about 5 hours and 27 units for the 140M part if every stage-2 run used all 10
+epochs. Early stopping usually ends them sooner, so expect less. The cost cell measures this GPU
 and prints the upper bound before anything trains. The 400M model is measured separately and
 trains only if its upper bound is at most `MAX_UNITS_LARGE`. Every finished run and fold is saved to Drive, so after a disconnect, Run
 all continues where it stopped.
