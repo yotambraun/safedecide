@@ -736,6 +736,12 @@ these help, and keeps only what does:
 2. *Pass 2* (`SCORE_TEST = True`, Run all again): everything above is reused from Drive. It
    checks the seal, scores `test` once, and writes the results. About 10 minutes.
 
+**What it found** (run on 2026-10-25, sealed and scored on 2026-10-26). Out of fold, the
+chosen `r2-factors` reached 0.748 against 0.658 for v0.1's schedule; the bias did not help.
+On `test`, the 400M model reached 0.787 (+3.3 points over v0.1, paired 95% interval +1.4
+to +5.2) and the 140M v0.2 0.748 (−0.6, no gain). The whole run cost about 25 units.
+Details: `docs/METHOD.md`, section 8.
+
 **Budget.** A100 at 5.3 units/hour, as measured on 2026-10-17. Estimated from v0.1's measured
 speed: at most about 5 hours and 27 units for the 140M part if every stage-2 run used all 10
 epochs. Early stopping usually ends them sooner, so expect less. The cost cell measures this GPU
@@ -755,7 +761,7 @@ all continues where it stopped.
 md(imp, "## Setup")
 code(
     imp,
-    'BRANCH = "v0.2-recipe"  # the code this notebook was written for\n'
+    "BRANCH = None  # the default branch; the sealed v0.2 run used commit d4d8ccb\n"
     + SETUP
     + '%pip install -q "/content/safedecide[all]"\n%cd /content/safedecide\n',
 )

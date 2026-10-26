@@ -136,7 +136,8 @@ configs:
 
 # SafeDecide evaluation results
 
-Every number in the [{model_repo}](https://huggingface.co/{model_repo}) model card can be
+Every number in the [{model_repo}](https://huggingface.co/{model_repo}) and
+[yotambr/safedecide-400m](https://huggingface.co/yotambr/safedecide-400m) model cards can be
 recomputed from the files here. The viewer shows the per-decision predictions, one tab per
 test set:
 
@@ -151,7 +152,7 @@ Each row is one decision scored by one model:
 | Column | Meaning |
 |---|---|
 | `id` | `<case>:<question>`; questions about the same case share the prefix |
-| `model` | which model produced the row (the released one is `SafeDecide (no ConfTr)`) |
+| `model` | which model produced the row (released: `SafeDecide (no ConfTr)` is SafeDecide-140M v0.1, and `SafeDecide-400M v0.2`) |
 | `kind` | `noul` (yes/no), `choice` or `score` |
 | `options` | the answer options, in order |
 | `probs` | the model's calibrated probability for each option |
@@ -170,6 +171,16 @@ same data as JSON (`typed_decisions_test.json`, `typed_decisions_official.json`,
 `automation_board.json`, `shift.json`, `run_info.json`) and the figures (`*.png`).
 Phocinae-Largha-150M-v1 rows are its shipped weights, which saw 500 of the 2,000
 typed-decisions test decisions in training.
+
+`v0.2/` holds the v0.2 round, whose choices were made on `train` and sealed before `test`
+was scored once: `recipe.json` (its SHA-256 is the seal posted in
+[typed-decisions discussion #39](https://huggingface.co/datasets/LocalLLaMA/typed-decisions/discussions/39)),
+the recipe selection (`selection.md`), the cross-validation out-of-fold predictions on
+`train` (`cv/`), the test results (`test_results.md`, `typed_decisions_official.json`,
+`typed_decisions_test.json`, `run_info.json`), and the same test predictions, with v0.1's,
+recomputed in full precision on CPU (`full_precision/`, scores in `scores.json`). The sealed
+test pass ran on a GPU with bf16 autocast; the `SafeDecide-* v0.2` rows in the viewer are
+that pass.
 
 Produced by the notebooks in [yotambraun/safedecide](https://github.com/yotambraun/safedecide).
 """

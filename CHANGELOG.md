@@ -6,8 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-26
+
 ### Added
 
+- SafeDecide-400M ([yotambr/safedecide-400m](https://huggingface.co/yotambr/safedecide-400m)):
+  the same option-scoring cross-encoder on Ettin-encoder-400m, fine-tuned on typed-decisions
+  `train` alone. On typed-decisions `test`: accuracy 0.787 (v0.1: 0.754; paired gain +3.3
+  points, 95% interval +1.4 to +5.2), KL 0.083, Brier 0.045, and 52.4% of decisions
+  automated at a certified 10% error (v0.1: 33.2%). It certifies 5%, 10% and 20%; it takes
+  605 ms per 3-option decision on one CPU thread (140M: 80 ms).
+- SafeDecide-140M v0.2, sealed with the 400M and scored once: 0.748 (−0.6, no gain), so the
+  released 140M stays v0.1. Its weights are on the 140M repo's `v0.2` branch.
 - `notebooks/03_improve_gpu.ipynb`: chooses the v0.2 training recipe by nested 5-fold
   cross-validation on typed-decisions `train` (5,400 out-of-fold decisions; the 600-decision
   calibration carve and `test` stay untouched), refits the winner, seals the result
@@ -28,6 +38,10 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - Colab setup clones the public repository first and uses `GH_TOKEN` only if that fails.
+- `LocalAdapter` predicts in full precision on GPU too, as the thresholds are certified and
+  as the model runs on CPU. The v0.1 and v0.2 test passes used bf16 autocast on an A100;
+  in full precision on CPU the 400M scores 0.7875 (bf16: 0.787), the 140M v0.2 0.755
+  (0.748) and v0.1 0.7545 (0.754).
 
 ## [0.1.0] - 2026-10-18
 

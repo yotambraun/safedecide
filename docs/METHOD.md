@@ -220,6 +220,46 @@ at its last step. v0.2 changes are chosen in `notebooks/03_improve_gpu.ipynb`:
   out-of-fold score, the choice and the SHA-256 of each final model's weights and
   configuration. Its hash is posted publicly, and the scoring pass refuses to run
   if any of it has changed.
+* **A 400M model**: the winning stage-2 recipe, fixed in advance, straight from
+  Ettin-encoder-400m with no stage 1 and no cross-validation of its own. It trains once on
+  90% of the 1,080 cases, with early stopping and temperatures on the other 10%, and is
+  certified on the same calibration carve and sealed with the 140M model.
+
+### What v0.2 found
+
+Out-of-fold accuracy on 5,400 decisions, paired against v0.1's schedule (95% intervals
+over cases):
+
+| Recipe | Accuracy | vs `r0-old-schedule` |
+|---|---|---|
+| `r0-old-schedule` | 0.658 | – |
+| `r1-long` | 0.664 | +0.005 [−0.008, +0.018] |
+| `r1-long-s1x2` | 0.737 | +0.079 [+0.064, +0.093] |
+| `r2-factors` (chosen) | 0.748 | +0.089 [+0.074, +0.104] |
+| `r2-factors` + per-question bias | 0.743 | +0.084 [+0.069, +0.099] |
+
+* A longer stage 1 is what helped. A longer stage 2 alone did not, and factor questions
+  added about one point on top (+0.011 [−0.001, +0.022] over `r1-long-s1x2`, short of clear).
+* Keeping typed-decisions out of stage 1 cost more than expected. On v0.1's own
+  600-decision validation carve, `r0-old-schedule` is 9.8 points below v0.1, whose stage 1
+  saw the typed-decisions train carve four times. The chosen recipe only ties v0.1 there
+  (+0.002 [−0.037, +0.038]). The leak-free stage 1 made the comparison clean but removed
+  v0.1's strongest ingredient.
+* On `test`, scored once after the seal: the 400M model reached 0.787 (+0.033
+  [+0.014, +0.052] over v0.1), the 140M v0.2 0.748 (−0.006 [−0.026, +0.011]). The gains
+  measured on the calibration carve before sealing (+0.048 and +0.018) were both
+  larger. That carve also sets the thresholds and was the go/no-go check, so a smaller
+  gain on `test` is what selection on it predicts.
+* Precision moves a single score by up to 0.7 points but not the comparison. The test
+  pass ran with bf16 autocast on an A100, while the thresholds were certified in full
+  precision. In full precision on CPU the 400M scores 0.7875, the 140M v0.2 0.755 and
+  v0.1 0.7545; paired against v0.1 in full precision, the 400M is +0.033
+  [+0.014, +0.052] and the 140M v0.2 +0.0005 [−0.021, +0.019]. `LocalAdapter` now
+  always scores in full precision.
+* Accuracy conventions differ on the 35 test decisions whose gold probabilities tie.
+  Against the gold `label`, the 400M scores 0.787 (used throughout). Counting any tied
+  option as correct gives 0.794, and taking the first tied option, as the benchmark's
+  `bench/score_with_jobs.py` does, gives 0.784.
 
 ## References
 
@@ -228,3 +268,4 @@ at its last step. v0.2 changes are chosen in `notebooks/03_improve_gpu.ipynb`:
 * Geifman, El-Yaniv. *Selective Classification for Deep Neural Networks.* NeurIPS 2017.
 * Sadinle, Lei, Wasserman. *Least Ambiguous Set-Valued Classifiers with Bounded Error Levels.* JASA 2019.
 * Marone et al. *mmBERT: A Modern Multilingual Encoder with Annealed Language Learning.* 2025.
+* Weller et al. *Seq vs Seq: An Open Suite of Paired Encoders and Decoders.* 2025 (Ettin).

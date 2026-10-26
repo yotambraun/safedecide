@@ -38,7 +38,7 @@ class LocalAdapter:
     def __init__(self, path: str, name: str | None = None, calibrated: bool = True):
         from .predict import SafeDecider
 
-        self.decider = SafeDecider.from_pretrained(path)
+        self.decider = SafeDecider.from_pretrained(path, full_precision=True)  # as certified and as run on CPU
         self.calibrated = calibrated
         self.name = name or self.decider.config.get("run_name", path)
 

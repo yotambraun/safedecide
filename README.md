@@ -17,8 +17,9 @@ labelled data, not guessed:
 > With probability at least 1 − δ over the calibration data, at most α of the
 > decisions marked `automate` are wrong.
 
-It ships as a 140M model you can run anywhere, including in a browser tab, and as a
-library that puts the same guarantee on top of any decision model you already use.
+It ships as two models, a 140M one you can run anywhere, including in a browser tab,
+and a more accurate 400M one, and as a library that puts the same guarantee on top of
+any decision model you already use.
 
 <p align="center">
   <a href="https://huggingface.co/spaces/yotambr/safedecide">
@@ -31,7 +32,8 @@ library that puts the same guarantee on top of any decision model you already us
 so it goes to a person.</em> <a href="https://huggingface.co/spaces/yotambr/safedecide">Try it in your browser</a>.</p>
 
 [Demo](https://huggingface.co/spaces/yotambr/safedecide) ·
-[Model](https://huggingface.co/yotambr/safedecide-140m) ·
+[140M model](https://huggingface.co/yotambr/safedecide-140m) ·
+[400M model](https://huggingface.co/yotambr/safedecide-400m) ·
 [Raw results](https://huggingface.co/datasets/yotambr/safedecide-results) ·
 [Method](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md)
 
@@ -55,16 +57,25 @@ On [typed-decisions](https://huggingface.co/datasets/LocalLLaMA/typed-decisions)
 
 | Model | Params | Accuracy ↑ | KL from gold ↓ | Brier ↓ | Automation @ 10% ↑ | Realised error |
 |---|---|---|---|---|---|---|
-| **SafeDecide** (released) | 140M | 0.754 | 0.126 | 0.069 | **33.2%** ± 5.2 | 6.3% |
+| **SafeDecide-400M** (v0.2, released) | 400M | **0.787** | **0.083** | **0.045** | **52.4%** ± 3.8 | 6.7% |
+| **SafeDecide-140M** (v0.1, released) | 140M | 0.754 | 0.126 | 0.069 | 33.2% ± 5.2 | 6.3% |
+| SafeDecide-140M v0.2 (sealed; on the 140M repo's `v0.2` branch) | 140M | 0.748 | 0.113 | 0.061 | 40.6% ± 3.0 | 6.3% |
 | SafeDecide with Conformal Training (ablation) | 140M | 0.753 | 0.130 | 0.070 | 29.7% ± 5.2 | 6.3% |
 | Phocinae-Largha-150M-v1, shipped weights (trained on 500 test decisions) | 144M | 0.906 | 0.055 | 0.025 | 93.9% ± 2.9 | 7.8% |
 | Prior (ignores the input) | – | 0.487 | 0.328 | 0.181 | 0.0% | – |
 
 *Automation @ 10%* is the share of decisions the model may take alone with the error
 among them certified at most 10% (δ = 10%), as mean ± std over 100 random
-calibration/test splits by case. Out of the box, the threshold shipped with the
-model, applied unchanged to all 2,000 test decisions, automated 26.2% of them, and
-4.4% of those were wrong.
+calibration/test splits by case. Out of the box, the threshold shipped with each
+model, applied unchanged to all 2,000 test decisions, automated 39.7% of them with
+4.3% of those wrong (400M), and 26.2% with 4.4% wrong (140M).
+
+The v0.2 models were chosen on `train` alone, by cross-validation, and sealed before
+`test` was scored once: the hash of the file recording every choice was posted
+publicly first ([method](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md#8-choosing-a-recipe-without-test-v02)).
+The 400M is 3.3 points more accurate than the 140M v0.1 (paired 95% interval: +1.4
+to +5.2); the 140M v0.2 is not (−0.6), so the released 140M stays v0.1. The 400M is
+slower: 605 ms per 3-option decision on one CPU thread, against 80 ms.
 
 At 5% nothing can be certified on the 600 calibration decisions. The benchmark's
 gold is the mean of three samples from a teacher model, and a fresh sample from that
@@ -88,7 +99,8 @@ labels, since SafeDecide was fitted on `train` and they were scored zero-shot.
 
 Full tables with 95% intervals, the Conformal Training ablation and the
 distribution-shift test are in [`results/`](https://github.com/yotambraun/safedecide/tree/main/results)
-and the [model card](https://huggingface.co/yotambr/safedecide-140m). Every
+and the model cards ([140M](https://huggingface.co/yotambr/safedecide-140m),
+[400M](https://huggingface.co/yotambr/safedecide-400m)). Every
 per-decision prediction is in the [results dataset](https://huggingface.co/datasets/yotambr/safedecide-results).
 
 ## Quickstart
@@ -153,6 +165,10 @@ response["guarantee"]["statement"]  # the promise behind every "automate", in wo
 The model carries a certified threshold for error budgets of 5%, 10% (the default)
 and 20%. Pass `alpha=0.2` to `decide` to use another; a budget the calibration data
 could not certify escalates everything rather than promise too much.
+
+`SafeDecider.from_pretrained("yotambr/safedecide-400m")` loads the larger model behind
+the same API. It is more accurate and certifies all three budgets (the 140M cannot
+certify 5%), at about 7.5 times the CPU time.
 
 To serve it behind the same API as Jev, run
 `safedecide serve --model yotambr/safedecide-140m` and add `?alpha=0.2` to a request
@@ -252,12 +268,16 @@ has the proof sketch, the assumptions and the known weaknesses.
 
 ## Reproduce
 
-Two Colab notebooks reproduce every number:
+Three Colab notebooks reproduce every number:
 
 1. [`notebooks/01_train_gpu.ipynb`](https://github.com/yotambraun/safedecide/blob/main/notebooks/01_train_gpu.ipynb):
-   two-stage training, calibration and evaluation, about 80 minutes on one A100.
+   two-stage training, calibration and evaluation of v0.1, about 80 minutes on one A100.
 2. [`notebooks/02_publish.ipynb`](https://github.com/yotambraun/safedecide/blob/main/notebooks/02_publish.ipynb):
    certification, baseline, figures, ONNX export and model card, about 20 minutes on a T4.
+3. [`notebooks/03_improve_gpu.ipynb`](https://github.com/yotambraun/safedecide/blob/main/notebooks/03_improve_gpu.ipynb):
+   v0.2: chooses the recipe by cross-validation on `train`, fits the final 140M and 400M
+   models, seals them, then scores `test` in a second pass. About 5 hours on one A100
+   (about 25 Colab units); the second pass reuses everything and takes about 10 minutes.
 
 The same steps run from a shell with `safedecide train | calibrate | benchmark | export | card`
 (see `safedecide --help`).
