@@ -3,6 +3,7 @@
 safedecide data        --profile clean
 safedecide train       --config configs/base.yaml
 safedecide calibrate   --model yotambr/safedecide-140m --data my_decisions.jsonl
+safedecide decide      --model yotambr/safedecide-140m request.json   (or JSONL; '-' or nothing reads stdin)
 safedecide benchmark   --model runs/base/best [--http URL] [--phocinae URL]
 safedecide export      --model runs/base/best
 safedecide card        --model runs/base/best --repo you/safedecide-140m --results results.json
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 REVISION_HELP = "Hub branch, tag or commit hash to load (e.g. v0.2); pin a commit for reproducible thresholds"
@@ -91,6 +93,53 @@ def cmd_calibrate(a):
     )
     print(json.dumps({k: cfg[k] for k in ("temperatures", "selective_rules")}, indent=2))
     print(f"Calibrated copy: {cfg['path']}")
+
+
+def _read_requests(source: str) -> tuple[list[tuple[int, dict]], bool]:
+    """``/v1/systemone`` requests from a file or stdin: one JSON object, or one per line.
+
+    Returns ``(line number, request)`` pairs and whether the input was a single object.
+    """
+    text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    try:
+        whole = json.loads(text)
+    except json.JSONDecodeError:
+        whole = None
+    if isinstance(whole, dict):
+        return [(1, whole)], True
+    requests = []
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise SystemExit(f"safedecide decide: {source}:{n}: not JSON ({e.msg})") from e
+        if not isinstance(request, dict):
+            raise SystemExit(f"safedecide decide: {source}:{n}: expected a JSON object, got {type(request).__name__}")
+        requests.append((n, request))
+    if not requests:
+        raise SystemExit(f"safedecide decide: {source} holds no requests")
+    return requests, False
+
+
+def cmd_decide(a):
+    from .predict import SafeDecider
+
+    requests, single = _read_requests(a.input)
+    decider = SafeDecider.from_pretrained(a.model, revision=a.revision)
+    try:
+        rule = decider.rule(a.alpha)
+    except ValueError as e:
+        raise SystemExit(f"safedecide decide: {e}") from e
+    if not rule.get("statement"):
+        print(f"safedecide decide: {a.model} has no certified thresholds, so every answer escalates", file=sys.stderr)
+    for n, request in requests:
+        try:
+            response = decider.decide(request, alpha=a.alpha)
+        except (KeyError, ValueError, TypeError) as e:
+            raise SystemExit(f"safedecide decide: {a.input}:{n}: {e}") from e
+        print(json.dumps(response, ensure_ascii=False, indent=2 if single and not a.jsonl else None), flush=True)
 
 
 def cmd_benchmark(a):
@@ -217,6 +266,20 @@ def main(argv=None) -> None:
     s.add_argument("--max-rows", type=int, default=8000)
     s.add_argument("--seed", type=int, default=0)
     s.set_defaults(fn=cmd_calibrate)
+
+    s = sub.add_parser(
+        "decide",
+        help="answer /v1/systemone requests with automate/escalate and the guarantee (JSON out)",
+        description="Answer one /v1/systemone request (a JSON object) or many (JSON Lines). Each result "
+        "carries every answer's probabilities and its action (automate or escalate) and the guarantee "
+        "behind 'automate'. A single request prints as indented JSON, several as one JSON object per line.",
+    )
+    s.add_argument("input", nargs="?", default="-", help="request file, JSON or JSONL (default: stdin)")
+    s.add_argument("--model", required=True, help="local checkpoint or Hub repo id")
+    s.add_argument("--revision", help=REVISION_HELP)
+    s.add_argument("--alpha", type=float, help="certified error level to apply (default: the model's default)")
+    s.add_argument("--jsonl", action="store_true", help="one compact JSON line per result, even for one request")
+    s.set_defaults(fn=cmd_decide)
 
     s = sub.add_parser("benchmark")
     s.add_argument("--model", action="append", help="local checkpoint (repeatable)")

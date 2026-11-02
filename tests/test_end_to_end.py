@@ -412,3 +412,57 @@ def test_calibrating_a_local_checkpoint_never_overwrites_it_silently(tiny, tmp_p
     )
     with pytest.raises(SystemExit, match="--output-dir"):
         main(["calibrate", "--model", str(src), "--data", str(data)])
+
+
+@pytest.fixture
+def calibrated_tiny(tiny, tmp_path):
+    from safedecide.pipeline import calibrate_checkpoint
+
+    tok, model, _ = tiny
+    path = tmp_path / "calibrated"
+    model.save_pretrained(path)
+    tok.save_pretrained(path)
+    calibrate_checkpoint(str(path), synthetic(100, 30), alpha=0.1, one_per_case=True)
+    return path
+
+
+REQUEST = {
+    "state": "customer says refund please help",
+    "questions": {
+        "team": {"type": "choice", "instructions": "which team?", "criteria": {"billing": None, "technical": None}},
+        "urgent": {"type": "noul", "instructions": "is this urgent?"},
+    },
+}
+
+
+@pytest.mark.e2e
+def test_decide_command(calibrated_tiny, tmp_path, capsys, monkeypatch):
+    import io
+
+    from safedecide.cli import main
+
+    one = tmp_path / "request.json"
+    one.write_text(json.dumps(REQUEST, indent=2), encoding="utf-8")
+    main(["decide", "--model", str(calibrated_tiny), str(one)])
+    out = json.loads(capsys.readouterr().out)
+    assert set(out["answers"]) == {"team", "urgent"}
+    assert out["answers"]["team"]["action"] in {"automate", "escalate"}
+    assert out["guarantee"]["alpha"] == 0.1 and "one decision per case" in out["guarantee"]["statement"]
+
+    # JSON Lines on stdin: one result per line, in order, at another certified level
+    lines = [REQUEST, {**REQUEST, "state": "customer says crash"}]
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(json.dumps(r) for r in lines) + "\n"))
+    main(["decide", "--model", str(calibrated_tiny), "--alpha", "0.2"])
+    results = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert len(results) == 2 and all(r["guarantee"]["alpha"] == 0.2 for r in results)
+
+    # --jsonl keeps a single request on one line too
+    main(["decide", "--model", str(calibrated_tiny), "--jsonl", str(one)])
+    assert len(capsys.readouterr().out.strip().splitlines()) == 1
+
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(json.dumps(REQUEST) + "\n" + json.dumps({"state": "x", "questions": {"q": {"type": "choice"}}}))
+    with pytest.raises(SystemExit, match=r"bad\.jsonl:2"):
+        main(["decide", "--model", str(calibrated_tiny), str(bad)])
+    with pytest.raises(SystemExit, match="no rule certified"):
+        main(["decide", "--model", str(calibrated_tiny), "--alpha", "0.3", str(one)])

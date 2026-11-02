@@ -176,6 +176,14 @@ The certified thresholds live in the repo next to the weights, so in production 
 commit hash: a later upload to `main` would otherwise change the model and its thresholds
 under you. `safedecide calibrate` and `safedecide serve` take the same `--revision`.
 
+From a shell, `safedecide decide` answers a request file, or JSON Lines of them on stdin,
+and prints each result as JSON with its `action` and the `guarantee`:
+
+```bash
+safedecide decide --model yotambr/safedecide-140m request.json
+cat requests.jsonl | safedecide decide --model yotambr/safedecide-140m --alpha 0.2 > results.jsonl
+```
+
 To serve it behind the same API as Jev, run
 `safedecide serve --model yotambr/safedecide-140m` and add `?alpha=0.2` to a request
 to change the budget.

@@ -20,6 +20,10 @@ All notable changes to this project are documented here. The format follows
   may name its case with a `"case"` field (default: its state). `automation_at_alpha`
   takes `one_per_case=True` to measure the cost: on the saved typed-decisions `test`
   predictions of SafeDecide-140M v0.1, automation at a 10% budget falls from 32.4% to 3.9%.
+- `safedecide decide`: answers one `/v1/systemone` request (a JSON object) or many (JSON
+  Lines) from a file or stdin, and prints each result as JSON with every answer's
+  probabilities, its `action` (automate or escalate) and the `guarantee`; `--alpha` picks a
+  certified level, `--revision` a Hub revision, `--jsonl` forces one line per result.
 - `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
   cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
   `n_cases` and `one_per_case`.
