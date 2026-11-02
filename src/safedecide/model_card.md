@@ -166,6 +166,10 @@ the shipped guarantee: re-certify on your own labelled decisions with
 
 Serve it behind the same `/v1/systemone` API as Jev: `safedecide serve --model $repo_id`.
 
+The certified thresholds are stored in this repo with the weights. To keep both fixed,
+pin a commit: `SafeDecider.from_pretrained("$repo_id", revision="<commit hash>")`
+(`--revision` on the command line).
+
 ## How it works
 
 * **Architecture:** each (state, question, option) triple is scored by a

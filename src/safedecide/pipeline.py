@@ -43,6 +43,7 @@ def calibrate_checkpoint(
     temperature_set: Sequence[Decision] | None = None,
     alphas: Sequence[float] = (0.05, 0.10, 0.20),
     keep_temperatures: bool = False,
+    revision: str | None = None,
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
     selective threshold on the other half (disjoint by case, so the guarantee is valid).
@@ -63,10 +64,12 @@ def calibrate_checkpoint(
 
     ``path`` is a local checkpoint or a Hub repo id. A Hub model is first
     downloaded into ``output_dir`` (default: a folder named after the repo), and
-    the re-calibrated copy lives there.
+    the re-calibrated copy lives there. ``revision`` picks the Hub branch, tag or commit.
     """
     if not Path(path).is_dir():
-        path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1])
+        path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1], revision=revision)
+    elif revision is not None:
+        raise ValueError(f"revision={revision!r} selects a Hub revision, but {path} is a local folder")
     decider = SafeDecider.from_pretrained(path, full_precision=True)  # the precision users run on CPU
     cal = list(calibration_set)
     if keep_temperatures:

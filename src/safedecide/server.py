@@ -7,13 +7,13 @@ import secrets
 from typing import Any
 
 
-def create_app(model_path: str):
+def create_app(model_path: str, revision: str | None = None):
     from fastapi import FastAPI, Header, HTTPException
 
     from . import __version__
     from .predict import SafeDecider
 
-    decider = SafeDecider.from_pretrained(model_path)
+    decider = SafeDecider.from_pretrained(model_path, revision=revision)
     app = FastAPI(title="safedecide", version=__version__)
     api_key = os.environ.get("SAFEDECIDE_API_KEY")
 
@@ -36,7 +36,7 @@ def create_app(model_path: str):
     return app
 
 
-def serve(model_path: str, host: str = "127.0.0.1", port: int = 8177) -> None:
+def serve(model_path: str, host: str = "127.0.0.1", port: int = 8177, revision: str | None = None) -> None:
     import uvicorn
 
-    uvicorn.run(create_app(model_path), host=host, port=port)
+    uvicorn.run(create_app(model_path, revision), host=host, port=port)

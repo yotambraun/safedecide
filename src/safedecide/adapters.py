@@ -35,10 +35,11 @@ def _from_top(k: int, top: int, conf: float) -> np.ndarray:
 class LocalAdapter:
     """A trained safedecide checkpoint."""
 
-    def __init__(self, path: str, name: str | None = None, calibrated: bool = True):
+    def __init__(self, path: str, name: str | None = None, calibrated: bool = True, revision: str | None = None):
         from .predict import SafeDecider
 
-        self.decider = SafeDecider.from_pretrained(path, full_precision=True)  # as certified and as run on CPU
+        # full precision: as certified and as run on CPU
+        self.decider = SafeDecider.from_pretrained(path, full_precision=True, revision=revision)
         self.calibrated = calibrated
         self.name = name or self.decider.config.get("run_name", path)
 

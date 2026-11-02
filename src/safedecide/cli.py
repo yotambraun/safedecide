@@ -16,6 +16,8 @@ import argparse
 import json
 from pathlib import Path
 
+REVISION_HELP = "Hub branch, tag or commit hash to load (e.g. v0.2); pin a commit for reproducible thresholds"
+
 
 def _eval_pools(max_eval: int, seed: int, sources):
     from .data import load_jev_distill, load_typed_decisions
@@ -70,7 +72,14 @@ def cmd_calibrate(a):
         cal = load_profile(profile, "calibration", max_rows=a.max_rows, seed=a.seed)
     keep = bool(a.data) and not a.refit_temperatures  # your file goes to the threshold in full
     cfg = calibrate_checkpoint(
-        a.model, cal, a.alpha, a.delta, seed=a.seed, output_dir=a.output_dir, keep_temperatures=keep
+        a.model,
+        cal,
+        a.alpha,
+        a.delta,
+        seed=a.seed,
+        output_dir=a.output_dir,
+        keep_temperatures=keep,
+        revision=a.revision,
     )
     print(json.dumps({k: cfg[k] for k in ("temperatures", "selective_rules")}, indent=2))
     print(f"Calibrated copy: {cfg['path']}")
@@ -156,7 +165,7 @@ def cmd_push(a):
 def cmd_serve(a):
     from .server import serve
 
-    serve(a.model, a.host, a.port)
+    serve(a.model, a.host, a.port, revision=a.revision)
 
 
 def main(argv=None) -> None:
@@ -178,6 +187,7 @@ def main(argv=None) -> None:
 
     s = sub.add_parser("calibrate", help="certify automate/escalate thresholds on labelled decisions")
     s.add_argument("--model", required=True, help="local checkpoint or Hub repo id")
+    s.add_argument("--revision", help=REVISION_HELP)
     s.add_argument("--data", help="your labelled decisions, one JSON object per line (see README)")
     s.add_argument("--output-dir", help="where a Hub model is downloaded and re-calibrated")
     s.add_argument(
@@ -223,6 +233,7 @@ def main(argv=None) -> None:
 
     s = sub.add_parser("serve")
     s.add_argument("--model", required=True)
+    s.add_argument("--revision", help=REVISION_HELP)
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8177)
     s.set_defaults(fn=cmd_serve)

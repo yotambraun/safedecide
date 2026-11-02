@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.3.0] - Unreleased
 
+### Added
+
+- `revision=` on `SafeDecider.from_pretrained`, `calibrate_checkpoint`, `LocalAdapter` and
+  the server, and `--revision` on `safedecide calibrate` and `safedecide serve`: load a Hub
+  branch, tag or commit, e.g. the 140M repo's `v0.2` branch, or pin a commit so the weights
+  and their certified thresholds cannot change under you. A revision with a local folder is
+  an error rather than ignored.
+
 ### Fixed
 
 - `labelled_decisions_from_jsonl` (and so `safedecide calibrate --data`) read any `noul`

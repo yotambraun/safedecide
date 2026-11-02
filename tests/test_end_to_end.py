@@ -277,8 +277,11 @@ def test_hub_repo_id_is_downloaded(tiny, tmp_path, monkeypatch):
     rule = {"threshold": 0.0, "alpha": 0.05, "delta": 0.1, "statement": "test"}
     (hub_copy / CONFIG_NAME).write_text(json.dumps({"selective_rule": rule}), encoding="utf-8")
 
-    def fake_snapshot_download(repo_id, local_dir=None, **kwargs):
+    revisions = []
+
+    def fake_snapshot_download(repo_id, local_dir=None, revision=None, **kwargs):
         assert repo_id == "someone/tiny-model"
+        revisions.append(revision)
         if local_dir is None:
             return str(hub_copy)
         import shutil
@@ -292,8 +295,9 @@ def test_hub_repo_id_is_downloaded(tiny, tmp_path, monkeypatch):
 
     # Re-calibrating a Hub model writes into a local copy, never into the Hub cache.
     out = tmp_path / "recalibrated"
-    cfg = calibrate_checkpoint("someone/tiny-model", synthetic(100, 7), output_dir=str(out))
+    cfg = calibrate_checkpoint("someone/tiny-model", synthetic(100, 7), output_dir=str(out), revision="abc123")
     assert cfg["path"] == str(out)
+    assert revisions[-1] == "abc123"  # the pinned revision reaches the download
     assert (out / CONFIG_NAME).exists()
 
     # The card contains non-ASCII characters (α, ≤); it must round-trip as UTF-8 on every OS.

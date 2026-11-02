@@ -170,6 +170,12 @@ could not certify escalates everything rather than promise too much.
 the same API. It is more accurate and certifies all three budgets (the 140M cannot
 certify 5%), at about 7.5 times the CPU time.
 
+`from_pretrained` takes a Hub `revision` (a branch, tag or commit hash). The sealed
+140M v0.2 is `SafeDecider.from_pretrained("yotambr/safedecide-140m", revision="v0.2")`.
+The certified thresholds live in the repo next to the weights, so in production pin a
+commit hash: a later upload to `main` would otherwise change the model and its thresholds
+under you. `safedecide calibrate` and `safedecide serve` take the same `--revision`.
+
 To serve it behind the same API as Jev, run
 `safedecide serve --model yotambr/safedecide-140m` and add `?alpha=0.2` to a request
 to change the budget.

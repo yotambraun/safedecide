@@ -19,17 +19,22 @@ from .schema import Decision, decisions_from_systemone_request
 CONFIG_NAME = "safedecide_config.json"
 
 
-def resolve_model_dir(name_or_path: str, local_dir: str | None = None) -> str:
+def resolve_model_dir(name_or_path: str, local_dir: str | None = None, revision: str | None = None) -> str:
     """Local directory for a checkpoint: the path itself, or a Hub download.
 
     ``local_dir`` puts the download in a normal folder instead of the Hub cache,
     which is what you want before re-calibrating (calibration writes into it).
+    ``revision`` is a Hub branch, tag or commit hash (default: the repo's default branch).
     """
     if Path(name_or_path).is_dir():
+        if revision is not None:
+            raise ValueError(f"revision={revision!r} selects a Hub revision, but {name_or_path} is a local folder")
         return str(name_or_path)
     from huggingface_hub import snapshot_download
 
-    return snapshot_download(name_or_path, local_dir=local_dir, ignore_patterns=["onnx/*", "assets/*"])
+    return snapshot_download(
+        name_or_path, revision=revision, local_dir=local_dir, ignore_patterns=["onnx/*", "assets/*"]
+    )
 
 
 class SafeDecider:
@@ -44,9 +49,15 @@ class SafeDecider:
 
     # ------------------------------------------------------------------ io
     @classmethod
-    def from_pretrained(cls, name_or_path: str, device=None, full_precision=False) -> SafeDecider:
-        """Load a local checkpoint directory or a Hugging Face Hub repo id."""
-        path = resolve_model_dir(name_or_path)
+    def from_pretrained(
+        cls, name_or_path: str, device=None, full_precision=False, revision: str | None = None
+    ) -> SafeDecider:
+        """Load a local checkpoint directory or a Hugging Face Hub repo id.
+
+        ``revision`` (Hub only) is a branch, tag or commit hash: ``revision="v0.2"`` loads
+        a model's ``v0.2`` branch, and a commit hash pins the exact weights and thresholds.
+        """
+        path = resolve_model_dir(name_or_path, revision=revision)
         tokenizer, model = load_backbone(path)
         cfg_path = Path(path) / CONFIG_NAME
         config = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
