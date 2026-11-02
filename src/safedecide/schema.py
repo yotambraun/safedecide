@@ -20,6 +20,10 @@ KINDS = ("noul", "choice", "score")
 # for a yes/no question.
 NOUL_RENDER = {"false": "no", "true": "yes"}
 
+# The answers a labelled ``noul`` line may give, compared case-insensitively. JSON
+# ``true``/``false`` and the integers 1/0 are accepted too; anything else is an error.
+NOUL_ANSWERS = {"true": "true", "yes": "true", "1": "true", "false": "false", "no": "false", "0": "false"}
+
 
 @dataclass
 class Decision:
@@ -133,6 +137,21 @@ def decisions_from_systemone_request(request: dict[str, Any]) -> list[Decision]:
     return out
 
 
+def noul_answer(answer: Any) -> str:
+    """``"true"`` or ``"false"`` for a labelled yes/no answer; raises ``ValueError`` on anything else.
+
+    Accepted: JSON booleans, the integers 1 and 0, and the strings true/false, yes/no and 1/0
+    in any case. A typo, ``null`` or ``"maybe"`` is refused rather than read as one side.
+    """
+    if isinstance(answer, bool):
+        return "true" if answer else "false"
+    if isinstance(answer, int) and answer in (0, 1):
+        return "true" if answer else "false"
+    if isinstance(answer, str) and answer.strip().lower() in NOUL_ANSWERS:
+        return NOUL_ANSWERS[answer.strip().lower()]
+    raise ValueError(f"noul answer {answer!r} is not one of true/false, yes/no, 1/0")
+
+
 def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
     """Read labelled decisions for calibration: one JSON object per line.
 
@@ -140,9 +159,11 @@ def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
 
         {"state": ..., "question": {"type", "instructions", "criteria"}, "answer": ...}
 
-    ``answer`` is an option name for ``choice``, ``true``/``false`` (or ``"yes"``/``"no"``)
-    for ``noul`` and the level index for ``score``. Questions sharing a ``state`` stay on
-    the same side of every calibration split.
+    ``answer`` is an option name for ``choice``, the level index for ``score``, and for
+    ``noul`` one of the spellings :func:`noul_answer` accepts (true/false, yes/no, 1/0, in
+    any case, or a JSON boolean). Anything else raises ``ValueError`` naming the line.
+
+    Questions sharing a ``state`` stay on the same side of every calibration split.
     """
     import json
 
@@ -151,15 +172,18 @@ def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
         for n, line in enumerate(f, 1):
             if not line.strip():
                 continue
-            row = json.loads(line)
-            qid = str(row.get("id", f"line{n}"))
-            (d,) = decisions_from_systemone_request({"state": row["state"], "questions": {qid: row["question"]}})
-            answer = row["answer"]
-            if d.kind == "noul":
-                answer = "true" if str(answer).lower() in ("true", "yes", "1") else "false"
-            answer = str(answer)
-            if answer not in d.options:
-                raise ValueError(f"{path}:{n}: answer {row['answer']!r} is not one of {d.options}")
+            try:
+                row = json.loads(line)
+                if "answer" not in row:
+                    raise ValueError("missing 'answer'")
+                qid = str(row.get("id", f"line{n}"))
+                (d,) = decisions_from_systemone_request({"state": row["state"], "questions": {qid: row["question"]}})
+                answer = noul_answer(row["answer"]) if d.kind == "noul" else str(row["answer"])
+                if answer not in d.options:
+                    raise ValueError(f"answer {row['answer']!r} is not one of {d.options}")
+            except (ValueError, KeyError, TypeError, AttributeError) as e:
+                detail = f"missing {e}" if isinstance(e, KeyError) else str(e)
+                raise ValueError(f"{path}:{n}: {detail}") from e
             d.target = [1.0 if o == answer else 0.0 for o in d.options]
             d.source = "jsonl"
             out.append(d)

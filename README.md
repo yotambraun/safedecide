@@ -189,8 +189,10 @@ Write one labelled question per line, in the same shape as a request:
 {"state": {"thread": "..."}, "question": {"type": "noul", "instructions": "This needs a human."}, "answer": true}
 ```
 
-`answer` is the option name for `choice`, `true` or `false` for `noul`, and the level
-number for `score`. Then:
+`answer` is the option name for `choice`, the level number for `score`, and for `noul`
+`true`/`false`, `yes`/`no` or `1`/`0` (any case, quoted or not). Any other answer, a typo
+or `null` included, stops with an error naming the line, since a mislabelled decision
+would weaken the guarantee without any sign of it. Then:
 
 ```bash
 safedecide calibrate --model yotambr/safedecide-140m --data my_decisions.jsonl --output-dir safedecide-mine

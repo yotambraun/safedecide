@@ -4,7 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - Unreleased
+
+### Fixed
+
+- `labelled_decisions_from_jsonl` (and so `safedecide calibrate --data`) read any `noul`
+  answer other than true/yes/1 as `false`, so a typo, `null` or `"maybe"` silently became a
+  label. It now accepts true/false, yes/no and 1/0 in any case, JSON booleans and the
+  integers 1/0, and raises an error naming the file and line for anything else. Malformed
+  lines and lines without an `answer` are reported the same way.
 
 ## [0.2.0] - 2026-10-26
 

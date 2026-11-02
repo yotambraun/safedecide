@@ -144,3 +144,31 @@ def test_labelled_decisions_from_jsonl(tmp_path):
     path.write_text(json.dumps({**rows[0], "answer": "sales"}) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="not one of"):
         labelled_decisions_from_jsonl(str(path))
+
+
+@pytest.mark.parametrize(
+    "answer,label",
+    [(True, 1), (False, 0), (1, 1), (0, 0), ("true", 1), ("False", 0), ("YES", 1), ("no", 0), ("1", 1), (" 0 ", 0)],
+)
+def test_noul_answer_spellings(tmp_path, answer, label):
+    path = tmp_path / "mine.jsonl"
+    path.write_text(json.dumps({"state": "s", "question": {"type": "noul"}, "answer": answer}), encoding="utf-8")
+    (d,) = labelled_decisions_from_jsonl(str(path))
+    assert d.label == label
+
+
+@pytest.mark.parametrize("answer", [None, "maybe", "ture", "", 2, 0.5, "y", ["true"]])
+def test_noul_answer_typo_is_an_error_not_false(tmp_path, answer):
+    """Anything unrecognised must stop calibration: silently reading it as 'false' corrupts the labels."""
+    good = {"state": "s", "question": {"type": "noul"}, "answer": "yes"}
+    path = tmp_path / "mine.jsonl"
+    path.write_text(json.dumps(good) + "\n" + json.dumps({**good, "answer": answer}) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"mine\.jsonl:2: .*noul"):
+        labelled_decisions_from_jsonl(str(path))
+
+
+def test_labelled_line_without_answer_names_the_line(tmp_path):
+    path = tmp_path / "mine.jsonl"
+    path.write_text(json.dumps({"state": "s", "question": {"type": "noul"}}) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"mine\.jsonl:1: .*answer"):
+        labelled_decisions_from_jsonl(str(path))
