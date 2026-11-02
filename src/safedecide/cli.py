@@ -148,6 +148,7 @@ def _read_requests(source: str) -> tuple[list[tuple[int, dict]], bool]:
     Returns ``(line number, request)`` pairs and whether the input was a single object.
     """
     text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    source = "<stdin>" if source == "-" else source
     try:
         whole = json.loads(text)
     except json.JSONDecodeError:
@@ -185,7 +186,7 @@ def cmd_decide(a):
         try:
             response = decider.decide(request, alpha=a.alpha)
         except (KeyError, ValueError, TypeError) as e:
-            raise SystemExit(f"safedecide decide: {a.input}:{n}: {e}") from e
+            raise SystemExit(f"safedecide decide: {'<stdin>' if a.input == '-' else a.input}:{n}: {e}") from e
         print(json.dumps(response, ensure_ascii=False, indent=2 if single and not a.jsonl else None), flush=True)
 
 
@@ -304,7 +305,7 @@ def main(argv=None) -> None:
     )
     target = s.add_mutually_exclusive_group(required=True)
     target.add_argument("--model", help="local checkpoint or Hub repo id")
-    target.add_argument("--http", help="URL of a /v1/systemone endpoint to certify (see README for the contract)")
+    target.add_argument("--http", help="URL of a /v1/systemone endpoint to certify (contract: docs/INTEGRATIONS.md)")
     s.add_argument("--revision", help=REVISION_HELP)
     s.add_argument("--data", help="your labelled decisions, one JSON object per line (see README)")
     s.add_argument(
@@ -333,7 +334,10 @@ def main(argv=None) -> None:
     http.add_argument("--concurrency", type=int, default=4, help="requests in flight at once (default: %(default)s)")
     http.add_argument("--timeout", type=float, default=60.0, help="seconds per request (default: %(default)s)")
     http.add_argument(
-        "--retries", type=int, default=3, help="retries on errors, timeouts, 429 and 5xx (default: %(default)s)"
+        "--retries",
+        type=int,
+        default=3,
+        help="retries on connection errors, timeouts, 429 and 5xx (default: %(default)s)",
     )
     s.set_defaults(fn=cmd_calibrate)
 

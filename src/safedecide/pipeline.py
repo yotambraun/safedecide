@@ -122,7 +122,7 @@ def calibrate_checkpoint(
 
     ``one_per_case`` certifies the thresholds on one decision per case (drawn with
     ``seed``), valid when cases are exchangeable; by default every decision counts,
-    and repeated cases raise a :class:`ClusteredCalibrationWarning` (see :func:`certify_rules`).
+    and repeated cases emit a :class:`ClusteredCalibrationWarning` (see :func:`certify_rules`).
 
     Where the result is written:
 
