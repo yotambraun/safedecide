@@ -1,4 +1,8 @@
-"""High-level steps: calibrate a checkpoint, then benchmark any adapter."""
+"""High-level steps: calibrate a checkpoint, then benchmark any adapter.
+
+Running a model needs torch; the certification steps (``certify_rules``) do not,
+so :mod:`.predict` is imported only where a checkpoint is loaded.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +27,6 @@ from .conformal import (
 from .conformal import one_per_case as pick_one_per_case
 from .data import split_by_group
 from .metrics import bootstrap_ci, summarize, top_confidence
-from .predict import CONFIG_NAME, SafeDecider, resolve_model_dir
 from .schema import Decision, case_of
 
 
@@ -136,6 +139,8 @@ def calibrate_checkpoint(
     The returned dict's ``path`` is the folder written to; load it with
     :meth:`SafeDecider.from_pretrained`.
     """
+    from .predict import SafeDecider
+
     path, in_place = _calibration_target(path, output_dir, revision)
     decider = SafeDecider.from_pretrained(path, full_precision=True)  # the precision users run on CPU
     if in_place and (decider.config.get("selective_rules") or decider.config.get("selective_rule")):
@@ -186,6 +191,8 @@ def calibrate_checkpoint(
 
 def _calibration_target(path: str, output_dir: str | None, revision: str | None) -> tuple[str, bool]:
     """The folder :func:`calibrate_checkpoint` writes to, and whether that is the source checkpoint itself."""
+    from .predict import resolve_model_dir
+
     if not Path(path).is_dir():
         local = output_dir or path.rstrip("/").split("/")[-1]
         return resolve_model_dir(path, local_dir=local, revision=revision), False
@@ -281,6 +288,7 @@ def shipped_rule_check(path: str, decisions: Sequence[Decision]) -> dict:
     only holds if ``decisions`` are exchangeable with the calibration set.
     """
     from .conformal import SelectiveRule
+    from .predict import SafeDecider
 
     decider = SafeDecider.from_pretrained(path, full_precision=True)
     rule_d = decider.config.get("selective_rule")
@@ -324,5 +332,7 @@ def save_results(results: list[dict], path: str) -> None:
 
 
 def load_config(path: str) -> dict:
+    from .predict import CONFIG_NAME
+
     p = Path(path) / CONFIG_NAME
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}

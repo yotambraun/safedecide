@@ -247,6 +247,8 @@ rule.threshold  # automate when confidence >= threshold (inf: nothing could be c
 
 With several questions per case, `idx = safedecide.one_per_case(case_ids)` and
 `calibrate_selective(confidence[idx], correct[idx], ...)` certify on one per case.
+`import safedecide` and these statistics do not load torch or transformers; only
+`SafeDecider`, which runs a model, does, on first use.
 
 ## Measure any decision model
 

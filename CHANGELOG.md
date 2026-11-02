@@ -42,6 +42,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `import safedecide`, the statistics (`calibrate_selective`, `automation_at_alpha`,
+  `one_per_case`, ...), `safedecide.calibration` and `safedecide.pipeline` no longer import
+  torch or transformers; `safedecide.SafeDecider` loads them on first access. The public
+  API is unchanged.
+- Temperature and per-question bias fitting use SciPy's L-BFGS-B instead of torch's LBFGS.
+  On random test problems both reach the same optimum (temperatures within 1.5e-4
+  relative; SciPy's objective was never higher). Saved temperatures and thresholds are not
+  affected.
 - The package's project URLs list the 400M model next to the 140M one.
 - The release workflow's wheel smoke test runs `scripts/smoke_installed.py`: it checks the
   package was imported from the install, that the model card template and `py.typed` are in

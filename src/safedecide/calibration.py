@@ -1,7 +1,8 @@
 """Temperature scaling: one scalar per question kind, fitted on a held-out split.
 
 Temperature scaling never changes the argmax, so accuracy is untouched; it
-only fixes over/under-confidence. An optional per-question bias (fitted on
+only fixes over/under-confidence. Both fits are small convex-ish problems solved
+with SciPy's L-BFGS-B, so this module does not need torch. An optional per-question bias (fitted on
 held-out predictions, never on test) can move the argmax. Conformal
 calibration is applied on top of both.
 """
@@ -12,34 +13,44 @@ import hashlib
 from collections.abc import Sequence
 
 import numpy as np
-import torch
+from scipy.optimize import minimize
+from scipy.special import log_softmax
 
 from .schema import KINDS, Decision
 
+T_MIN, T_MAX = 0.05, 20.0
+_LBFGS = {"ftol": 1e-12, "gtol": 1e-9, "maxiter": 1000}
 
-def _nll_at(log_t: torch.Tensor, logits: list[np.ndarray], targets: list[np.ndarray]) -> torch.Tensor:
-    t = log_t.exp()
-    loss = 0.0
+
+def _by_width(logits: Sequence[np.ndarray], targets: Sequence[np.ndarray]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Ragged rows stacked into one (logits, targets) pair of 2-D arrays per option count."""
+    groups: dict[int, tuple[list, list]] = {}
     for z, y in zip(logits, targets):
-        zt = torch.as_tensor(z, dtype=torch.float64) / t
-        loss = loss - (torch.as_tensor(y, dtype=torch.float64) * torch.log_softmax(zt, -1)).sum()
-    return loss / len(logits)
+        zs, ys = groups.setdefault(len(z), ([], []))
+        zs.append(z)
+        ys.append(y)
+    return [(np.asarray(zs, dtype=float), np.asarray(ys, dtype=float)) for zs, ys in groups.values()]
 
 
 def fit_temperature(logits: Sequence[np.ndarray], targets: Sequence[np.ndarray]) -> float:
+    """The temperature minimising mean soft cross-entropy (NLL), within [0.05, 20]."""
     if len(logits) == 0:
         return 1.0
-    log_t = torch.zeros(1, dtype=torch.float64, requires_grad=True)
-    opt = torch.optim.LBFGS([log_t], lr=0.1, max_iter=200, line_search_fn="strong_wolfe")
+    groups, n = _by_width(logits, targets), len(logits)
 
-    def closure():
-        opt.zero_grad()
-        loss = _nll_at(log_t, list(logits), list(targets))
-        loss.backward()
-        return loss
+    def nll_and_grad(x: np.ndarray) -> tuple[float, np.ndarray]:
+        t = np.exp(x[0])  # optimise log T
+        loss = grad = 0.0
+        for z, y in groups:
+            s = z / t
+            logp = log_softmax(s, axis=1)
+            loss -= float((y * logp).sum())
+            grad -= float(((np.exp(logp) * y.sum(1, keepdims=True) - y) * s).sum())  # d loss / d log T
+        return loss / n, np.array([grad / n])
 
-    opt.step(closure)
-    return float(np.clip(log_t.exp().item(), 0.05, 20.0))
+    bounds = [(np.log(T_MIN), np.log(T_MAX))]
+    res = minimize(nll_and_grad, np.zeros(1), jac=True, method="L-BFGS-B", bounds=bounds, options=_LBFGS)
+    return float(np.clip(np.exp(res.x[0]), T_MIN, T_MAX))
 
 
 def fit_temperatures(
@@ -71,19 +82,16 @@ def question_key(d: Decision) -> str:
 
 def fit_bias(logits: Sequence[np.ndarray], targets: Sequence[np.ndarray], l2: float = 0.01) -> np.ndarray:
     """One additive log-bias per option minimising soft cross-entropy, with a small L2 pull to zero."""
-    z = torch.as_tensor(np.stack(logits), dtype=torch.float64)
-    y = torch.as_tensor(np.stack(targets), dtype=torch.float64)
-    b = torch.zeros(z.shape[1], dtype=torch.float64, requires_grad=True)
-    opt = torch.optim.LBFGS([b], lr=0.1, max_iter=200, line_search_fn="strong_wolfe")
+    z = np.stack(logits).astype(float)
+    y = np.stack(targets).astype(float)
 
-    def closure():
-        opt.zero_grad()
-        loss = -(y * torch.log_softmax(z + b, -1)).sum(-1).mean() + l2 * (b**2).sum()
-        loss.backward()
-        return loss
+    def loss_and_grad(b: np.ndarray) -> tuple[float, np.ndarray]:
+        logp = log_softmax(z + b, axis=1)
+        loss = -(y * logp).sum(1).mean() + l2 * float(b @ b)
+        grad = (np.exp(logp) * y.sum(1, keepdims=True) - y).mean(0) + 2 * l2 * b
+        return float(loss), grad
 
-    opt.step(closure)
-    out = b.detach().numpy()
+    out = minimize(loss_and_grad, np.zeros(z.shape[1]), jac=True, method="L-BFGS-B", options=_LBFGS).x
     return out - out.mean()  # softmax ignores a shared shift
 
 
