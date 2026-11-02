@@ -154,13 +154,19 @@ def test_full_pipeline(tiny, tmp_path):
     assert calibration["sources"] == {"jsonl": len(lines)}
     assert calibration["temperatures_kept"] and calibration["n_selective"] == len(lines)  # all of it to the threshold
     n_cases = len({r["state"] for r in lines})
-    assert calibration["n_cases"] == n_cases < len(lines) and not calibration["one_per_case"]
+    assert calibration["n_cases"] == n_cases < len(lines) and calibration["unit"] == "decision"
 
     one = tmp_path / "one-per-case"
-    main(["calibrate", "--model", best, "--data", str(mine), "--output-dir", str(one), "--one-per-case"])
+    main(["calibrate", "--model", best, "--data", str(mine), "--output-dir", str(one), "--unit", "one-per-case"])
     calibration = load_config(str(one))["calibration"]
-    assert calibration["one_per_case"] and calibration["n_selective"] == n_cases
+    assert calibration["unit"] == "one-per-case" and calibration["n_selective"] == n_cases
     assert all(r["n_calibration"] == n_cases for r in load_config(str(one))["selective_rules"])
+
+    by_case = tmp_path / "by-case"
+    main(["calibrate", "--model", best, "--data", str(mine), "--output-dir", str(by_case), "--unit", "case"])
+    calibration = load_config(str(by_case))["calibration"]
+    assert calibration["unit"] == "case" and calibration["n_selective"] == len(lines)
+    assert all(r["n_calibration"] == n_cases for r in load_config(str(by_case))["selective_rules"])
     assert config["selective_rule"]["alpha"] == 0.1
 
     decider = SafeDecider.from_pretrained(best, device="cpu")
@@ -422,7 +428,7 @@ def calibrated_tiny(tiny, tmp_path):
     path = tmp_path / "calibrated"
     model.save_pretrained(path)
     tok.save_pretrained(path)
-    calibrate_checkpoint(str(path), synthetic(100, 30), alpha=0.1, one_per_case=True)
+    calibrate_checkpoint(str(path), synthetic(100, 30), alpha=0.1, unit="one-per-case")
     return path
 
 

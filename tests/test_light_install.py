@@ -31,7 +31,13 @@ def test_statistics_api_imports_and_runs_without_torch():
         import numpy as np
 
         import safedecide
-        from safedecide import Decision, calibrate_selective, decisions_from_systemone_request, one_per_case
+        from safedecide import (
+            Decision,
+            calibrate_selective,
+            calibrate_selective_by_case,
+            decisions_from_systemone_request,
+            one_per_case,
+        )
         from safedecide.calibration import calibrated_probs, fit_question_bias, fit_temperatures
         from safedecide.pipeline import certify_rules
 
@@ -40,6 +46,8 @@ def test_statistics_api_imports_and_runs_without_torch():
         correct = rng.uniform(0, 1, 2000) < conf
         assert np.isfinite(safedecide.calibrate_selective(conf, correct, alpha=0.2, delta=0.1).threshold)
         assert len(one_per_case([0, 0, 1])) == 2
+        by_case = calibrate_selective_by_case(conf, correct, [i // 5 for i in range(2000)], 0.2, 0.1)
+        assert by_case.n_calibration == 400 and np.isfinite(by_case.threshold)
         rules, _ = certify_rules(conf, correct, list(range(2000)), 0.1, 0.1)
         assert len(rules) == 3
 

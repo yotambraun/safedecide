@@ -140,8 +140,8 @@ def decisions_from_systemone_request(request: dict[str, Any]) -> list[Decision]:
 def case_of(d: Decision) -> str:
     """The case a decision belongs to: its ``case`` field when it has one, otherwise its state.
 
-    Questions about one case are correlated, so splits keep a case on one side and
-    ``one_per_case`` certification keeps one decision of each.
+    Questions about one case are correlated, so splits keep a case on one side, and
+    certification with ``unit="case"`` or ``"one-per-case"`` treats a whole case as one unit.
     """
     return str(d.meta.get("case") or d.state)
 

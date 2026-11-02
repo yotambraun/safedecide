@@ -7,8 +7,10 @@ probabilities are calibrated.
 
 The units are the rows passed in. Several questions about one case are
 correlated, so treating them as separate rows is an approximation that can make
-the bound optimistic; :func:`one_per_case` keeps one random decision per case,
-which is valid when whole cases are exchangeable (docs/METHOD.md, section 2).
+the bound optimistic. :func:`calibrate_selective_by_case` certifies with whole
+cases as the units and keeps every question; :func:`one_per_case` keeps one
+random decision per case. Both are valid when whole cases are independent
+(docs/METHOD.md, section 2).
 
 1. Selective risk control ("automate or escalate")
    Find a confidence threshold lambda such that, with probability >= 1-delta
@@ -41,6 +43,16 @@ from scipy.stats import beta as beta_dist
 DEFAULT_GRID = np.round(np.concatenate([np.linspace(0.0, 0.9, 46), np.linspace(0.902, 0.999, 50)]), 4)
 # Where the fixed-sequence chains start (high to low). Fixed in advance, never chosen from data.
 DEFAULT_STARTS = (0.99, 0.95, 0.90, 0.80)
+# What a certificate counts as one unit: each decision (assumes decisions are exchangeable),
+# each case with every decision kept, or one random decision of each case (the last two
+# assume only that whole cases are).
+UNITS = ("decision", "case", "one-per-case")
+
+
+def check_unit(unit: str) -> str:
+    if unit not in UNITS:
+        raise ValueError(f"unit must be one of {', '.join(UNITS)}; got {unit!r}")
+    return unit
 
 
 # --------------------------------------------------------------------------- #
@@ -118,6 +130,105 @@ def one_per_case(cases: Sequence, seed: int = 0) -> np.ndarray:
     return np.sort(np.array([m[int(rng.integers(len(m)))] for m in members.values()], dtype=int))
 
 
+# Bet fractions for the case-level test: midpoint quadrature of a Beta(1, 1/2) prior on
+# b * (1 - alpha), which leans towards the largest admissible bet. Fixed, never fitted.
+_BET_FRACTIONS = 0.999 * (1.0 - (1.0 - (np.arange(200) + 0.5) / 200) ** 2)
+
+
+def _case_counts(confidence: np.ndarray, correct: np.ndarray, codes: np.ndarray, n_cases: int, lam: float):
+    """Per case: decisions automated at ``lam``, how many of them are wrong, and the case size."""
+    sel = confidence >= lam
+    automated = np.bincount(codes, weights=sel, minlength=n_cases)
+    wrong = np.bincount(codes, weights=sel & ~correct, minlength=n_cases)
+    return automated, wrong
+
+
+def case_level_evalue(automated: np.ndarray, wrong: np.ndarray, size: np.ndarray, alpha: float) -> float:
+    """E-value against "the error among automated decisions exceeds ``alpha``", one term per case.
+
+    For case *i* with ``size`` questions, ``automated`` of them automated and ``wrong`` of those
+    wrong, ``x_i = (wrong_i - alpha * automated_i) / size_i`` lies in [-alpha, 1 - alpha], and
+    the error rate of a uniformly random question of a random case, among automated ones, is
+    at most alpha exactly when E[x] <= 0. For a fixed bet b in [0, 1/(1 - alpha)),
+    prod_i (1 - b * x_i) has expectation prod_i (1 - b * E[x]) <= 1 under the null when cases
+    are independent, whatever the dependence between questions of one case. The average over
+    the fixed bets in ``_BET_FRACTIONS`` is therefore an e-value, and rejecting when it reaches
+    1/level has type-I error <= level (Markov). The order of the cases does not matter.
+    """
+    x = (np.asarray(wrong, float) - alpha * np.asarray(automated, float)) / np.asarray(size, float)
+    values, counts = np.unique(x[x != 0], return_counts=True)  # cases with nothing automated give 1
+    if not len(values):
+        return 1.0
+    bets = _BET_FRACTIONS / (1.0 - alpha)
+    log_wealth = (counts[None, :] * np.log1p(-bets[:, None] * values[None, :])).sum(axis=1)
+    top = log_wealth.max()
+    return float(math.exp(top) * np.mean(np.exp(log_wealth - top))) if top < 700 else math.inf
+
+
+def _case_error_ucb(automated, wrong, size, level: float) -> float:
+    """Smallest alpha' on a 0.001 grid above which the case-level test rejects at ``level``."""
+    if automated.sum() == 0:
+        return 1.0
+    ucb = 1.0
+    for a in np.arange(999, 0, -1) / 1000:
+        if case_level_evalue(automated, wrong, size, a) < 1.0 / level:
+            break
+        ucb = float(a)
+    return ucb
+
+
+def calibrate_selective_by_case(
+    confidence: np.ndarray,
+    correct: np.ndarray,
+    cases: Sequence,
+    alpha: float = 0.05,
+    delta: float = 0.1,
+    grid: Sequence[float] = DEFAULT_GRID,
+    starts: Sequence[float] | None = DEFAULT_STARTS,
+) -> SelectiveRule:
+    """Like :func:`calibrate_selective`, with whole cases as the units and every decision kept.
+
+    ``cases`` gives the case of each decision. The guarantee needs cases to be independent
+    draws, not decisions: questions about one case may be correlated in any way. It bounds
+    the error of a uniformly random question of a new case, among automated ones, which is the
+    per-decision error when every case asks the same number of questions (as
+    :func:`one_per_case` does, but without discarding the other questions). Each threshold is
+    tested with :func:`case_level_evalue`, in the same fixed-sequence chains.
+
+    In the returned rule, ``n_calibration`` counts cases, ``calibration_automation`` is the
+    share of decisions automated, and ``calibration_error_ucb`` is the case-level upper bound
+    at the chain level.
+    """
+    confidence = np.asarray(confidence, dtype=float)
+    correct = np.asarray(correct, dtype=bool)
+    if len(cases) != len(confidence):
+        raise ValueError(f"got {len(cases)} cases for {len(confidence)} decisions")
+    _, codes = np.unique(np.asarray([str(c) for c in cases]), return_inverse=True)
+    n_cases = int(codes.max()) + 1 if len(codes) else 0
+    size = np.bincount(codes, minlength=n_cases).astype(float)
+    grid_desc = np.sort(np.asarray(grid, dtype=float))[::-1]
+    if starts is None:
+        chains, level = [[lam] for lam in grid_desc], delta / len(grid_desc)
+    else:
+        chains, level = [grid_desc[grid_desc <= s] for s in starts], delta / len(starts)
+    best = SelectiveRule(math.inf, alpha, delta, n_cases, 0.0, 1.0)
+    tested: dict[float, bool] = {}
+    for chain in chains:
+        for lam in chain:
+            lam = float(lam)
+            if lam not in tested:
+                automated, wrong = _case_counts(confidence, correct, codes, n_cases, lam)
+                tested[lam] = case_level_evalue(automated, wrong, size, alpha) >= 1.0 / level
+            if not tested[lam]:
+                break  # a chain stops at its first failure
+            if lam < best.threshold:
+                best = SelectiveRule(lam, alpha, delta, n_cases, float((confidence >= lam).mean()), 1.0)
+    if math.isfinite(best.threshold):
+        automated, wrong = _case_counts(confidence, correct, codes, n_cases, best.threshold)
+        best.calibration_error_ucb = _case_error_ucb(automated, wrong, size, level)
+    return best
+
+
 def apply_selective(rule: SelectiveRule, confidence: np.ndarray, correct: np.ndarray) -> dict:
     confidence = np.asarray(confidence, dtype=float)
     correct = np.asarray(correct, dtype=bool)
@@ -143,7 +254,7 @@ def automation_at_alpha(
     seed: int = 0,
     groups: Sequence[str] | None = None,
     starts: Sequence[float] | None = DEFAULT_STARTS,
-    one_per_case: bool = False,
+    unit: str = "decision",
 ) -> dict:
     """Repeated random cal/test splits on one labelled pool.
 
@@ -153,13 +264,16 @@ def automation_at_alpha(
 
     With ``groups`` (e.g. the case each question belongs to) a whole group goes
     to one side of the split, so correlated questions never straddle cal and test.
-    With ``one_per_case`` the threshold is certified on one random decision of each
-    calibration group (see :func:`one_per_case`) and applied to every test decision.
+    ``unit`` is what the threshold is certified on (see :data:`UNITS`): every decision
+    (``"decision"``), whole calibration groups with every decision kept (``"case"``,
+    :func:`calibrate_selective_by_case`), or one random decision of each calibration
+    group (``"one-per-case"``, :func:`one_per_case`). It is applied to every test decision.
     """
     confidence = np.asarray(confidence, dtype=float)
     correct = np.asarray(correct, dtype=bool)
-    if one_per_case and groups is None:
-        raise ValueError("one_per_case needs groups (the case of each decision)")
+    check_unit(unit)
+    if unit != "decision" and groups is None:
+        raise ValueError(f"unit={unit!r} needs groups (the case of each decision)")
     rng = np.random.default_rng(seed)
     if groups is None:
         members = [np.array([i]) for i in range(len(confidence))]
@@ -173,12 +287,16 @@ def automation_at_alpha(
         perm = rng.permutation(len(members))
         cut = int(len(members) * cal_fraction)
         cal_groups = [members[j] for j in perm[:cut]]
-        if one_per_case:
+        if unit == "one-per-case":
             cal = np.array([m[rng.integers(len(m))] for m in cal_groups], dtype=int)
         else:
             cal = np.concatenate(cal_groups)
         test = np.concatenate([members[j] for j in perm[cut:]])
-        rule = calibrate_selective(confidence[cal], correct[cal], alpha, delta, starts=starts)
+        if unit == "case":
+            cal_cases = np.concatenate([np.full(len(m), j) for j, m in enumerate(cal_groups)])
+            rule = calibrate_selective_by_case(confidence[cal], correct[cal], cal_cases, alpha, delta, starts=starts)
+        else:
+            rule = calibrate_selective(confidence[cal], correct[cal], alpha, delta, starts=starts)
         res = apply_selective(rule, confidence[test], correct[test])
         autos.append(res["automation_rate"])
         errs.append(res["selective_error"])
@@ -193,6 +311,7 @@ def automation_at_alpha(
         "selective_error_mean": float(np.mean(errs)),
         "violation_rate": violations / n_splits,
         "threshold_median": float(np.median(finite)) if finite else None,
+        "n_certified": len(finite),
         "n_splits": n_splits,
         "per_split": {"automation_rate": autos, "selective_error": errs},
     }

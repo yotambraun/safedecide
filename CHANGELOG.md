@@ -11,17 +11,24 @@ published numbers are those of 0.2.0.
 
 ### Added
 
-- `one_per_case` certification: `safedecide calibrate --one-per-case`,
-  `calibrate_checkpoint(..., one_per_case=True)`, `pipeline.certify_rules` and
-  `safedecide.one_per_case` (positions of one seeded-random decision per case) certify on
-  one decision per case, which is valid when whole cases are exchangeable. A labelled line
-  may name its case with a `"case"` field (default: its state). `automation_at_alpha`
-  takes `one_per_case=True` to measure the cost: on the saved typed-decisions `test`
-  predictions of SafeDecide-140M v0.1, automation at a 10% budget falls from 32.4% to 3.9%.
+- Certificates for clustered calibration data, chosen with `unit`
+  (`safedecide calibrate --unit`, and `unit=` in `calibrate_checkpoint`, `calibrate_adapter`,
+  `pipeline.certify_rules` and `automation_at_alpha`). Both new units are valid when whole
+  cases are exchangeable, however the questions of one case are related. A labelled line
+  may name its case with a `"case"` field (default: its state).
+  - `case`: `safedecide.calibrate_selective_by_case` keeps every question and tests each
+    threshold with an e-value over cases (testing by betting, with fixed bets; no seed, and
+    the order of cases does not matter). On the saved typed-decisions `test` predictions of
+    SafeDecide-140M v0.1 (100 case splits, 200 calibration cases), it automates 63.4% at a
+    20% budget, against 70.3% counting decisions as independent and 43.8% one per case. At
+    10% it certifies nothing on 200 cases (decisions: 32.4%, one per case: 3.9%).
+  - `one-per-case`: certifies on one seeded-random decision per case
+    (`safedecide.one_per_case` gives the positions).
 - `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
-  cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
-  `n_cases` and `one_per_case`, and a rule certified one per case says so in its
-  `statement`.
+  cases and the unit is `decision` (the default, which the shipped thresholds use). The
+  calibration record in `safedecide_config.json` adds `n_cases` and `unit`, and a rule
+  certified per case says so in its `statement`. `automation_at_alpha` also returns
+  `n_certified`, the number of splits that certified a threshold.
 
 - `revision=` on `SafeDecider.from_pretrained`, `calibrate_checkpoint`, `LocalAdapter` and
   the server, and `--revision` on `safedecide calibrate` and `safedecide serve`: load a Hub
@@ -76,8 +83,8 @@ published numbers are those of 0.2.0.
   copy) or `--in-place` (replace the thresholds in that folder); it no longer overwrites a
   local checkpoint by default.
 
-- `import safedecide`, the statistics (`calibrate_selective`, `automation_at_alpha`,
-  `one_per_case`, ...), `safedecide.calibration` and `safedecide.pipeline` no longer import
+- `import safedecide`, the statistics (`calibrate_selective`, `calibrate_selective_by_case`,
+  `automation_at_alpha`, `one_per_case`, ...), `safedecide.calibration` and `safedecide.pipeline` no longer import
   torch or transformers; `safedecide.SafeDecider` loads them on first access. The public
   API is unchanged.
 - Temperature and per-question bias fitting use SciPy's L-BFGS-B instead of torch's LBFGS.

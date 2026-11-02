@@ -6,6 +6,8 @@ from safedecide.conformal import (
     apply_selective,
     automation_at_alpha,
     calibrate_selective,
+    calibrate_selective_by_case,
+    case_level_evalue,
     clopper_pearson_upper,
     conformal_set_stats,
     lac_qhat,
@@ -97,6 +99,7 @@ def test_automation_at_alpha_keys():
     c, k = _synthetic(4000)
     out = automation_at_alpha(c, k, 0.05, 0.1, n_splits=5)
     assert 0 <= out["automation_rate_mean"] <= 1
+    assert 0 <= out["n_certified"] <= 5
     assert out["violation_rate"] <= 1
 
 
@@ -173,7 +176,111 @@ def test_one_per_case_stays_valid_on_clustered_data_where_all_rows_do_not():
 def test_automation_at_alpha_one_per_case_needs_groups():
     c, k = _synthetic(1000)
     groups = [str(i // 5) for i in range(1000)]
-    out = automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, groups=groups, one_per_case=True)
-    assert 0 <= out["automation_rate_mean"] <= 1
-    with pytest.raises(ValueError, match="groups"):
-        automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, one_per_case=True)
+    for unit in ("case", "one-per-case"):
+        out = automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, groups=groups, unit=unit)
+        assert 0 <= out["automation_rate_mean"] <= 1
+        with pytest.raises(ValueError, match="groups"):
+            automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, unit=unit)
+    with pytest.raises(ValueError, match="unit must be one of"):
+        automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, groups=groups, unit="row")
+
+
+def test_case_level_evalue_is_the_mixture_of_fixed_bets():
+    from safedecide.conformal import _BET_FRACTIONS
+
+    automated, wrong, size = np.array([2, 0, 3, 1]), np.array([0, 0, 1, 1]), np.array([2, 4, 3, 2])
+    alpha = 0.2
+    x = (wrong - alpha * automated) / size
+    bets = _BET_FRACTIONS / (1 - alpha)
+    expected = np.mean([np.prod(1 - b * x) for b in bets])
+    assert case_level_evalue(automated, wrong, size, alpha) == pytest.approx(expected, rel=1e-12)
+    # the order of cases does not matter, and a case with nothing automated contributes nothing
+    order = [3, 1, 0, 2]
+    assert case_level_evalue(automated[order], wrong[order], size[order], alpha) == pytest.approx(expected, rel=1e-12)
+    keep = automated > 0
+    assert case_level_evalue(automated[keep], wrong[keep], size[keep], alpha) == pytest.approx(expected, rel=1e-12)
+    assert case_level_evalue(np.zeros(3), np.zeros(3), np.ones(3), alpha) == 1.0
+    # every bet keeps 1 - b * x > 0, even for a case whose every question is automated and wrong
+    assert case_level_evalue(np.array([5]), np.array([5]), np.array([5]), alpha) > 0
+
+
+def test_by_case_does_not_depend_on_how_the_rows_are_ordered_or_cases_named():
+    c, k, cases = _clustered(300, np.random.default_rng(4), size=3)
+    rule = calibrate_selective_by_case(c, k, cases, 0.2, 0.1)
+    assert np.isfinite(rule.threshold) and rule.n_calibration == 300
+    perm = np.random.default_rng(5).permutation(len(c))
+    renamed = [f"ticket-{x * 7}" for x in cases[perm]]
+    again = calibrate_selective_by_case(c[perm], k[perm], renamed, 0.2, 0.1)
+    assert again == rule
+    assert rule.calibration_error_ucb <= 0.2 + 1e-9
+    assert rule.calibration_error_ucb >= (~k[c >= rule.threshold]).mean()
+
+
+def test_by_case_stays_valid_on_clustered_data_where_all_rows_do_not():
+    """Every question of a case shares its outcome: the worst case for clustering.
+
+    At 20% the case-level test certifies in about 92% of draws and goes over budget in
+    about 0.3%; the all-rows rule goes over in about 16% (delta is 10%).
+    """
+    alpha, delta, trials = 0.2, 0.1, 300
+    rng = np.random.default_rng(12)
+    c_pop, k_pop, _ = _clustered(200_000, rng, size=1)
+    violations = {"case": 0, "decision": 0}
+    certified = 0
+    for _ in range(trials):
+        c, k, cases = _clustered(400, rng)
+        for unit, rule in (
+            ("case", calibrate_selective_by_case(c, k, cases, alpha, delta)),
+            ("decision", calibrate_selective(c, k, alpha, delta)),
+        ):
+            if np.isfinite(rule.threshold):
+                certified += unit == "case"
+                violations[unit] += int((~k_pop[c_pop >= rule.threshold]).mean() > alpha)
+    assert certified / trials > 0.5  # the test has power here, so a low violation rate means something
+    assert violations["case"] / trials <= delta + 0.03  # Monte Carlo slack
+    assert violations["decision"] / trials > delta + 0.03
+
+
+def test_by_case_stays_valid_when_error_is_not_monotone_in_confidence():
+    """A band of high confidence with high error, and correlated errors inside a case.
+
+    The e-value test is conservative, so even testing every threshold uncorrected rarely
+    goes over budget here; this checks that the chains keep it valid while it certifies.
+    """
+    alpha, delta, trials = 0.2, 0.1, 100
+    rng = np.random.default_rng(13)
+
+    def draw(n_cases, size=4, sd=0.7):
+        conf = np.repeat(rng.uniform(0.5, 1.0, n_cases), size) + rng.normal(0, 0.01, n_cases * size)
+        p_wrong = np.where((conf > 0.93) & (conf < 0.97), 0.5, 0.8 * (1 - conf))
+        case_effect = np.repeat(rng.normal(0, sd, n_cases), size)
+        wrong = rng.uniform(0, 1, n_cases * size) < np.clip(p_wrong * np.exp(case_effect - sd**2 / 2), 0, 1)
+        return conf, ~wrong, np.repeat(np.arange(n_cases), size)
+
+    c_pop, k_pop, _ = draw(200_000)
+    rules = [calibrate_selective_by_case(*draw(1500), alpha, delta) for _ in range(trials)]
+    certified = [r for r in rules if np.isfinite(r.threshold)]
+    assert len(certified) / trials > 0.9
+    violations = sum(int((~k_pop[c_pop >= r.threshold]).mean() > alpha) for r in certified)
+    assert violations / trials <= delta + 0.03
+
+
+def test_by_case_keeps_more_than_one_per_case_when_questions_are_nearly_independent():
+    rng = np.random.default_rng(14)
+    n_cases, size = 400, 5
+    conf = rng.uniform(0.5, 1.0, n_cases * size)
+    correct = rng.uniform(0, 1, n_cases * size) < conf
+    groups = [str(i // size) for i in range(n_cases * size)]
+    runs = {
+        u: automation_at_alpha(conf, correct, 0.2, 0.1, n_splits=20, groups=groups, unit=u)
+        for u in ("case", "one-per-case")
+    }
+    assert runs["case"]["automation_rate_mean"] > runs["one-per-case"]["automation_rate_mean"] + 0.05
+    assert runs["case"]["violation_rate"] <= 0.1 + 0.1  # 20 splits: loose check that nothing is badly off
+
+
+def test_by_case_input_errors():
+    with pytest.raises(ValueError, match="cases for"):
+        calibrate_selective_by_case(np.ones(3), np.ones(3, bool), ["a", "b"], 0.1, 0.1)
+    rule = calibrate_selective_by_case(np.array([]), np.array([], bool), [], 0.1, 0.1)
+    assert not np.isfinite(rule.threshold) and rule.n_calibration == 0

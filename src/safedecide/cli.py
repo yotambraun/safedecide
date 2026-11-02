@@ -94,7 +94,7 @@ def _calibrate_http(a):
         retries=a.retries,
     )
     result = calibrate_adapter(
-        adapter, labelled_decisions_from_jsonl(a.data), a.alpha, a.delta, one_per_case=a.one_per_case, seed=a.seed
+        adapter, labelled_decisions_from_jsonl(a.data), a.alpha, a.delta, unit=a.unit, seed=a.seed
     )
     rule_file = {"safedecide_version": __version__, "endpoint": adapter.url, **result}  # headers are not saved
     Path(a.output).parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +136,7 @@ def cmd_calibrate(a):
         output_dir=a.output_dir,
         keep_temperatures=keep,
         revision=a.revision,
-        one_per_case=a.one_per_case,
+        unit=a.unit,
     )
     print(json.dumps({k: cfg[k] for k in ("temperatures", "selective_rules")}, indent=2))
     print(f"Calibrated copy: {cfg['path']}")
@@ -319,9 +319,12 @@ def main(argv=None) -> None:
         help="with --data: spend half of it refitting temperatures (default: keep the model's)",
     )
     s.add_argument(
-        "--one-per-case",
-        action="store_true",
-        help="certify on one random decision per case (lines sharing a state or 'case'): valid for exchangeable cases",
+        "--unit",
+        choices=("decision", "case", "one-per-case"),
+        default="decision",
+        help="what counts as one independent unit. 'case' (lines sharing a state or 'case' field) keeps every "
+        "line and is valid when whole cases are exchangeable; 'one-per-case' certifies on one random line per "
+        "case; 'decision' (default) treats every line as independent (default: %(default)s)",
     )
     s.add_argument("--alpha", type=float, default=0.1, help="default error level (5%%, 10%%, 20%% are all certified)")
     s.add_argument("--delta", type=float, default=0.1)

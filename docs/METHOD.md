@@ -19,8 +19,8 @@ We want λ such that the **selective error**
 is at most α, with high probability over the calibration data.
 
 Procedure, given *n* labelled calibration units exchangeable with the units
-it will be applied to. A unit is one decision by default, or one decision per
-case with `one_per_case` (below):
+it will be applied to. A unit is one decision by default; with clustered data it
+can be one case (`unit="case"` or `"one-per-case"`, below):
 
 1. Fix a grid Λ of thresholds *before looking at data* (96 values in [0, 0.999]).
 2. For each λ ∈ Λ: let *n_λ* = number of calibration decisions with c ≥ λ and
@@ -99,35 +99,71 @@ be too low: the 1 − δ coverage is no longer guaranteed. The error estimate it
 stays unbiased; what is overstated is the certainty about it. What is
 exchangeable in such data is whole cases.
 
-`one_per_case` (`safedecide calibrate --one-per-case`, or `conformal.one_per_case`
-for your own confidences) keeps one decision of each calibration case, drawn
-uniformly at random with a fixed seed, and certifies on those. If cases are
-exchangeable, these are i.i.d. draws, so the argument above holds exactly. The
-promise is then about a uniformly random question of a new case. That is the
+Two certificates rely only on whole cases being exchangeable (`safedecide calibrate
+--unit case` or `--unit one-per-case`; `unit=` in `certify_rules`,
+`calibrate_checkpoint`, `calibrate_adapter` and `automation_at_alpha`).
+`calibrate` uses the `case` field of each line when there is one, and the state
+otherwise. When cases repeat and the unit is `decision`, it warns
+(`ClusteredCalibrationWarning`). Both promise the same thing: the error of a
+uniformly random question of a new case, among automated ones. That is the
 per-decision error when every case asks the same number of questions, as in
 typed-decisions; when the number varies, it weights cases equally rather than
-decisions. `calibrate` uses the `case` field of each line when there is one, and
-the state otherwise. When cases repeat and `one_per_case` is off, it warns
-(`ClusteredCalibrationWarning`).
+decisions.
 
-The price is data: one unit per case instead of one per decision. On the saved
-per-decision test predictions of SafeDecide-140M v0.1 (typed-decisions `test`,
-2,000 decisions in 400 cases), over the same 100 case splits as the results (half
-the cases calibrate, the other half test):
+**One decision per case** (`one-per-case`, or `conformal.one_per_case` for your own
+confidences) keeps one decision of each calibration case, drawn uniformly at
+random with a fixed seed, and certifies on those with the procedure above. If
+cases are exchangeable these are i.i.d. draws, so the argument holds exactly. It
+discards every other question, and the outcome depends on the draw.
 
-| Budget | All decisions as units | One decision per case |
-|---|---|---|
-| 5% | 4.7% automated, certified in 32 of 100 splits | 0.0%, certified in none |
-| 10% | 32.4% ± 5.5, certified in 100 of 100 | 3.9% ± 10.1, certified in 14 |
-| 20% | 70.3% ± 5.5, certified in 100 of 100 | 43.8% ± 23.3, certified in 88 |
+**Every question, one unit per case** (`case`, `conformal.calibrate_selective_by_case`).
+For a threshold λ and case *i* with *m_i* questions, let *S_i* be how many are
+automated and *W_i* how many of those are wrong, and
 
+    x_i = (W_i − α S_i) / m_i  ∈ [−α, 1 − α].
+
+The promised error is at most α exactly when E[x] ≤ 0. For a fixed bet *b* in
+[0, 1/(1 − α)), every factor 1 − b·x_i is positive, and if cases are independent,
+E[∏ᵢ (1 − b·x_i)] = ∏ᵢ (1 − b·E[x]) ≤ 1 when E[x] > 0. That holds however the
+questions of one case depend on each other. The average of this product over 200
+fixed bets is therefore an e-value against "the error exceeds α". A threshold is
+certified when it reaches K/δ, which by Markov's inequality errs with probability at
+most δ/K, inside the same fixed-sequence chains. The bets are fixed in advance, as a
+midpoint quadrature of a Beta(1, ½) prior on *b*(1 − α), which favours the largest
+admissible bets. No data chose them, and the order of the cases does not matter.
+This is testing by betting (Waudby-Smith and Ramdas, 2024) applied to a bounded
+per-case quantity; `calibration_error_ucb` is the smallest α′ at which the test
+still rejects.
+
+What it costs is caution, not data. Because it assumes nothing about how the
+questions of one case are related, it must allow for all of them failing together,
+which caps the bet at 1/(1 − α): a case contributes at most what one decision would.
+On the saved per-decision test predictions of SafeDecide-140M v0.1 (typed-decisions
+`test`, 2,000 decisions in 400 cases), over the same 100 case splits as the results
+(half the cases calibrate, the other half test), with automation on the test half:
+
+| Budget | All decisions as units | Every question, one unit per case | One decision per case |
+|---|---|---|---|
+| 5% | 4.7% automated, certified in 32 of 100 splits | 0.0%, certified in none | 0.0%, certified in none |
+| 10% | 32.4% ± 5.5, certified in 100 of 100 | 0.0%, certified in none | 3.9% ± 10.1, certified in 14 |
+| 20% | 70.3% ± 5.5, certified in 100 of 100 | 63.4% ± 5.9, certified in 100 | 43.8% ± 23.3, certified in 88 |
+
+The test half went over budget in at most 2 of 100 splits for both case-level
+certificates (the all-decisions rule: 9 at 10%, 10 at 20%). On the ConfTr variant's
+predictions the case-level certificate gives 61.0% at 20% (one per case: 42.0%).
 (The all-decisions row recomputes the README's 33.2% from these files and gets
-32.4%.) A certificate that keeps every question and bounds the error per case
-would waste less of the data; it is not implemented. In the simulation in
-`test_conformal.py::test_one_per_case_stays_valid_on_clustered_data_where_all_rows_do_not`,
-where every question of a case shares its outcome, the all-decisions rule exceeds
-its 10% budget in about 17% of calibration draws (δ = 10%), and one decision per
-case in under 1%.
+32.4%.) At 20% the case-level certificate keeps most of the all-decisions
+automation; at 10%, 200 calibration cases are not enough evidence for a promise
+that must hold even if every question of a case fails at once. With more cases it
+certifies lower budgets too.
+
+In the simulation in
+`test_conformal.py::test_by_case_stays_valid_on_clustered_data_where_all_rows_do_not`,
+where every question of a case shares its outcome, the all-decisions rule exceeds a
+20% budget in about 16% of calibration draws (δ = 10%), and the case-level
+certificate in about 0.3% while certifying in about 92%. At 10%, the all-decisions
+rule exceeds its budget in about 17% of draws and one decision per case in under 1%
+(`test_one_per_case_stays_valid_on_clustered_data_where_all_rows_do_not`).
 
 The shipped thresholds and every *Automation @ α* figure in the results count
 decisions as units (the shipped ones: 600 decisions in 120 cases), so they rest on
@@ -210,8 +246,8 @@ On your own labelled decisions (`safedecide calibrate --data`), the checkpoint's
 saved temperatures are kept by default and the whole file is set B. The
 temperatures were fitted before that file was seen, so the guarantee is
 unaffected, and none of a small file is spent on them. `--refit-temperatures`
-restores the two-halves split. With `--one-per-case`, the threshold is certified
-on one decision per case of set B (§2).
+restores the two-halves split. With `--unit case` or `--unit one-per-case`, the
+threshold is certified with the cases of set B as the units (§2).
 
 The release is the stage-2 model with the lowest validation NLL. Choosing it by
 automation on B would reuse the data behind its guarantee.

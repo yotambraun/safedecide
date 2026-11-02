@@ -17,11 +17,11 @@ def _pool(n_cases, size, seed=0):
     return conf, correct, [f"case{i // size}" for i in range(n_cases * size)]
 
 
-def test_repeated_cases_warn_and_point_to_one_per_case():
+def test_repeated_cases_warn_and_point_to_the_case_unit():
     conf, correct, cases = _pool(100, 5)
-    with pytest.warns(ClusteredCalibrationWarning, match="one_per_case"):
+    with pytest.warns(ClusteredCalibrationWarning, match="unit='case'"):
         rules, info = certify_rules(conf, correct, cases, alpha=0.1, delta=0.1)
-    assert info == {"n_selective": 500, "n_cases": 100, "one_per_case": False}
+    assert info == {"n_selective": 500, "n_cases": 100, "unit": "decision"}
     assert [r["alpha"] for r in rules] == [0.05, 0.1, 0.2]
     assert all("statement" in r and r["n_calibration"] == 500 for r in rules)
 
@@ -30,11 +30,27 @@ def test_one_per_case_certifies_on_one_decision_per_case_without_warning():
     conf, correct, cases = _pool(100, 5)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        rules, info = certify_rules(conf, correct, cases, alpha=0.1, delta=0.1, one_per_case=True, seed=3)
-    assert info == {"n_selective": 100, "n_cases": 100, "one_per_case": True}
+        rules, info = certify_rules(conf, correct, cases, alpha=0.1, delta=0.1, unit="one-per-case", seed=3)
+    assert info == {"n_selective": 100, "n_cases": 100, "unit": "one-per-case"}
     assert all(r["n_calibration"] == 100 for r in rules)
-    again, _ = certify_rules(conf, correct, cases, alpha=0.1, delta=0.1, one_per_case=True, seed=3)
+    again, _ = certify_rules(conf, correct, cases, alpha=0.1, delta=0.1, unit="one-per-case", seed=3)
     assert again == rules  # seeded
+
+
+def test_case_unit_keeps_every_decision_without_warning():
+    conf, correct, cases = _pool(100, 5)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rules, info = certify_rules(conf, correct, cases, alpha=0.1, delta=0.1, unit="case")
+    assert info == {"n_selective": 500, "n_cases": 100, "unit": "case"}
+    assert all(r["n_calibration"] == 100 for r in rules)  # cases are the units
+    assert all("every question counted" in r["statement"] for r in rules)
+
+
+def test_unknown_unit_is_an_error():
+    conf, correct, cases = _pool(10, 2)
+    with pytest.raises(ValueError, match="unit must be one of"):
+        certify_rules(conf, correct, cases, alpha=0.1, delta=0.1, unit="cases")
 
 
 def test_one_decision_per_case_needs_no_warning():

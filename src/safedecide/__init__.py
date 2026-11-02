@@ -7,7 +7,13 @@ without torch; ``SafeDecider``, which runs a model, loads torch on first use.
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
-from .conformal import automation_at_alpha, calibrate_selective, conformal_set_stats, one_per_case
+from .conformal import (
+    automation_at_alpha,
+    calibrate_selective,
+    calibrate_selective_by_case,
+    conformal_set_stats,
+    one_per_case,
+)
 from .schema import Decision, decisions_from_systemone_request
 
 if TYPE_CHECKING:
@@ -23,6 +29,7 @@ __all__ = [
     "SafeDecider",
     "automation_at_alpha",
     "calibrate_selective",
+    "calibrate_selective_by_case",
     "conformal_set_stats",
     "decisions_from_systemone_request",
     "one_per_case",

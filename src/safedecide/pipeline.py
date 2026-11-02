@@ -21,6 +21,8 @@ from .conformal import (
     apply_selective,
     automation_at_alpha,
     calibrate_selective,
+    calibrate_selective_by_case,
+    check_unit,
     conformal_set_stats,
     risk_coverage_curve,
 )
@@ -29,16 +31,18 @@ from .data import split_by_group
 from .metrics import bootstrap_ci, summarize, top_confidence
 from .schema import Decision, case_of
 
+_UNIT_CLAUSE = {
+    "decision": "for data exchangeable with the calibration set",
+    "case": "for cases exchangeable with the calibration cases (certified per case, every question counted)",
+    "one-per-case": "for cases exchangeable with the calibration cases (certified on one decision per case)",
+}
 
-def guarantee_statement(alpha: float, delta: float, one_per_case: bool = False) -> str:
-    unit = (
-        "for cases exchangeable with the calibration cases (certified on one decision per case)"
-        if one_per_case
-        else "for data exchangeable with the calibration set"
-    )
+
+def guarantee_statement(alpha: float, delta: float, unit: str = "decision") -> str:
     return (
         f"With probability >= {1 - delta:.0%} over the calibration draw, the error rate among "
-        f"decisions marked 'automate' is <= {alpha:.0%}, {unit}. Everything else is marked 'escalate'."
+        f"decisions marked 'automate' is <= {alpha:.0%}, {_UNIT_CLAUSE[check_unit(unit)]}. "
+        "Everything else is marked 'escalate'."
     )
 
 
@@ -53,40 +57,49 @@ def certify_rules(
     alpha: float,
     delta: float,
     alphas: Sequence[float] = (0.05, 0.10, 0.20),
-    one_per_case: bool = False,
+    unit: str = "decision",
     seed: int = 0,
 ) -> tuple[list[dict], dict]:
     """Certify a rule at every level in ``alphas`` (plus ``alpha``) from top-option confidences and correctness.
 
-    ``cases`` gives the case of each decision. With ``one_per_case`` the rules are certified
-    on one seeded-random decision per case, which is valid when whole cases are exchangeable.
-    Otherwise every decision is a unit, which assumes decisions are exchangeable; when cases
-    repeat that is optimistic, and a :class:`ClusteredCalibrationWarning` says so.
+    ``cases`` gives the case of each decision; ``unit`` says what counts as one independent unit:
+
+    * ``"decision"`` (default): every decision, which assumes decisions are exchangeable. When
+      cases repeat that is optimistic, and a :class:`ClusteredCalibrationWarning` says so.
+    * ``"case"``: whole cases, every decision kept (:func:`~safedecide.conformal.calibrate_selective_by_case`).
+      Valid when whole cases are exchangeable, whatever the correlation inside a case.
+    * ``"one-per-case"``: one seeded-random decision per case, also valid for exchangeable cases,
+      with far fewer units.
 
     Returns the rules (each with its ``statement``) and what they were certified on.
     """
+    check_unit(unit)
     confidence = np.asarray(confidence, dtype=float)
     correct = np.asarray(correct, dtype=bool)
     cases = list(cases)
     n_cases = len(set(cases))
-    if one_per_case:
+    if unit == "one-per-case":
         idx = pick_one_per_case(cases, seed=seed)
         confidence, correct = confidence[idx], correct[idx]
-    elif n_cases < len(cases):
+    elif unit == "decision" and n_cases < len(cases):
         warnings.warn(
             f"the {len(cases)} calibration decisions come from {n_cases} cases. Questions about one case are "
             "correlated, but the certificate treats every decision as independent, so it can be optimistic. "
-            "To certify on one random decision per case instead (valid when cases are exchangeable), pass "
-            "one_per_case=True (safedecide calibrate --one-per-case). See docs/METHOD.md, section 2.",
+            "To certify with whole cases as the units (valid when cases are exchangeable, every decision "
+            "kept), pass unit='case' (safedecide calibrate --unit case). See docs/METHOD.md, section 2.",
             ClusteredCalibrationWarning,
             stacklevel=3,
         )
     rules = []
     for a in sorted({*alphas, alpha}):
-        rule_d = calibrate_selective(confidence, correct, a, delta).to_dict()
-        rule_d["statement"] = guarantee_statement(a, delta, one_per_case)
+        if unit == "case":
+            rule = calibrate_selective_by_case(confidence, correct, cases, a, delta)
+        else:
+            rule = calibrate_selective(confidence, correct, a, delta)
+        rule_d = rule.to_dict()
+        rule_d["statement"] = guarantee_statement(a, delta, unit)
         rules.append(rule_d)
-    return rules, {"n_selective": len(confidence), "n_cases": n_cases, "one_per_case": one_per_case}
+    return rules, {"n_selective": len(confidence), "n_cases": n_cases, "unit": unit}
 
 
 def calibrate_checkpoint(
@@ -101,7 +114,7 @@ def calibrate_checkpoint(
     alphas: Sequence[float] = (0.05, 0.10, 0.20),
     keep_temperatures: bool = False,
     revision: str | None = None,
-    one_per_case: bool = False,
+    unit: str = "decision",
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
     selective threshold on the other half (disjoint by case, so the guarantee is valid).
@@ -120,9 +133,10 @@ def calibrate_checkpoint(
     separate guarantee; ``alpha`` is the default one. Pick the level from your
     error budget, not from which level automates most.
 
-    ``one_per_case`` certifies the thresholds on one decision per case (drawn with
-    ``seed``), valid when cases are exchangeable; by default every decision counts,
-    and repeated cases emit a :class:`ClusteredCalibrationWarning` (see :func:`certify_rules`).
+    ``unit`` is what the thresholds are certified on: ``"decision"`` (default; repeated
+    cases emit a :class:`ClusteredCalibrationWarning`), ``"case"`` (whole cases, every
+    decision kept) or ``"one-per-case"`` (one decision per case, drawn with ``seed``). The
+    last two are valid when cases are exchangeable (see :func:`certify_rules`).
 
     Where the result is written:
 
@@ -139,6 +153,7 @@ def calibrate_checkpoint(
     The returned dict's ``path`` is the folder written to; load it with
     :meth:`SafeDecider.from_pretrained`.
     """
+    check_unit(unit)
     from .predict import SafeDecider
 
     path, in_place = _calibration_target(path, output_dir, revision)
@@ -168,9 +183,7 @@ def calibrate_checkpoint(
     probs_c = calibrated_probs(decider.logits(conf_set), conf_set, temps, decider.question_bias)
     conf = top_confidence(probs_c)
     correct = np.array([int(p.argmax()) == d.label for p, d in zip(probs_c, conf_set)])
-    rules, certified_on = certify_rules(
-        conf, correct, [case_of(d) for d in conf_set], alpha, delta, alphas, one_per_case, seed
-    )
+    rules, certified_on = certify_rules(conf, correct, [case_of(d) for d in conf_set], alpha, delta, alphas, unit, seed)
 
     decider.config.update(
         {
@@ -195,7 +208,7 @@ def calibrate_adapter(
     alpha: float = 0.1,
     delta: float = 0.1,
     alphas: Sequence[float] = (0.05, 0.10, 0.20),
-    one_per_case: bool = False,
+    unit: str = "decision",
     seed: int = 0,
 ) -> dict:
     """Certify automate/escalate thresholds for a model you already run, from its own probabilities.
@@ -210,12 +223,13 @@ def calibrate_adapter(
     Returns the rule file's contents: ``selective_rule`` (the ``alpha`` one),
     ``selective_rules`` and ``calibration``, as in a checkpoint's ``safedecide_config.json``.
     """
+    check_unit(unit)
     decisions = list(decisions)
     probs = adapter.predict_proba(decisions)
     conf = top_confidence(probs)
     correct = np.array([int(p.argmax()) == d.label for p, d in zip(probs, decisions)])
     rules, certified_on = certify_rules(
-        conf, correct, [case_of(d) for d in decisions], alpha, delta, alphas, one_per_case, seed
+        conf, correct, [case_of(d) for d in decisions], alpha, delta, alphas, unit, seed
     )
     return {
         "model": getattr(adapter, "model", None) or getattr(adapter, "name", None),

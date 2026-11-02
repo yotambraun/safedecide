@@ -50,8 +50,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
 rng = np.random.default_rng(0)
 rules, info = certify_rules(
-    rng.uniform(0.5, 1, 40), rng.uniform(0, 1, 40) < 0.9, [case_of(d) for d in decisions], 0.1, 0.1, one_per_case=True
+    rng.uniform(0.5, 1, 40), rng.uniform(0, 1, 40) < 0.9, [case_of(d) for d in decisions], 0.1, 0.1, unit="one-per-case"
 )
 assert info["n_selective"] == 20 and len(rules) == 3
+rules, info = certify_rules(
+    rng.uniform(0.5, 1, 40), rng.uniform(0, 1, 40) < 0.9, [case_of(d) for d in decisions], 0.1, 0.1, unit="case"
+)
+assert info == {"n_selective": 40, "n_cases": 20, "unit": "case"} and len(rules) == 3
 
 print(f"safedecide {safedecide.__version__} from {where.parent}: package data and offline API ok")

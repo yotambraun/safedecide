@@ -19,7 +19,7 @@ CONFIG = {
     "model_name": "tiny",
     "selective_rule": RULES[1],
     "selective_rules": RULES,
-    "calibration": {"n_selective": 120, "n_cases": 120, "one_per_case": True},
+    "calibration": {"n_selective": 120, "n_cases": 120, "unit": "one-per-case"},
 }
 
 
@@ -27,7 +27,7 @@ def test_describe_rule_explains_the_level_in_use():
     out = describe_rule(CONFIG)
     assert out["in_use"]["alpha"] == 0.1 and out["in_use"]["threshold"] == 0.82
     assert [lv["certified"] for lv in out["levels"]] == [False, True]
-    assert out["calibration"]["one_per_case"]
+    assert out["calibration"]["unit"] == "one-per-case"
     assert "0.82" in out["explanation"] and "the promise" in out["explanation"]
     stricter = describe_rule(CONFIG, alpha=0.05)
     assert stricter["in_use"]["threshold"] is None and "escalate" in stricter["explanation"]

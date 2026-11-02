@@ -207,8 +207,9 @@ the typed-decisions test split.
   and not per customer.
 * The thresholds above count each calibration decision as an independent unit, but
   the calibration carve asks five correlated questions about each of its cases, so the
-  certificate can be optimistic. `safedecide calibrate --one-per-case` certifies on one
-  decision per case instead, valid for exchangeable cases, at a large cost in automation
+  certificate can be optimistic. `safedecide calibrate --unit case` makes a whole case the
+  unit instead, valid for exchangeable cases; it automates less, most of all at low
+  budgets
   ([method](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md#2-the-guarantee-selective-risk-control)).
 * English-first; the base encoder is multilingual (1800+ languages) but other
   languages are not evaluated here.

@@ -35,7 +35,7 @@ safedecide calibrate --http https://decisions.internal:8000 --data my_decisions.
 `--data` is the labelled JSONL file described in the README (one question and its right
 answer per line). Every line is sent once, the answers are scored against the labels, and
 the thresholds are certified at 5%, 10% and 20% (`--alpha` sets the default, `--delta` the
-confidence, `--one-per-case` the unit, as for `--model`).
+confidence, `--unit` the unit, as for `--model`).
 
 ### Request
 
@@ -89,7 +89,7 @@ Its shape, with illustrative values and two of the three levels:
     {"threshold": 0.83, "alpha": 0.1, "delta": 0.1, "n_calibration": 600,
      "calibration_automation": 0.41, "calibration_error_ucb": 0.098, "statement": "With probability ..."}
   ],
-  "calibration": {"n_selective": 600, "n_cases": 120, "one_per_case": false, "n_decisions": 600,
+  "calibration": {"n_selective": 600, "n_cases": 120, "unit": "decision", "n_decisions": 600,
                   "accuracy": 0.81, "sources": {"jsonl": 600}}
 }
 ```
