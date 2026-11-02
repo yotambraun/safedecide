@@ -2,7 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from .conformal import automation_at_alpha, calibrate_selective, conformal_set_stats
+from .conformal import automation_at_alpha, calibrate_selective, conformal_set_stats, one_per_case
 from .predict import SafeDecider
 from .schema import Decision, decisions_from_systemone_request
 
@@ -18,4 +18,5 @@ __all__ = [
     "calibrate_selective",
     "conformal_set_stats",
     "decisions_from_systemone_request",
+    "one_per_case",
 ]

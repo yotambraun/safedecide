@@ -20,18 +20,70 @@ from .conformal import (
     conformal_set_stats,
     risk_coverage_curve,
 )
+from .conformal import one_per_case as pick_one_per_case
 from .data import split_by_group
 from .metrics import bootstrap_ci, summarize, top_confidence
 from .predict import CONFIG_NAME, SafeDecider, resolve_model_dir
-from .schema import Decision
+from .schema import Decision, case_of
 
 
-def guarantee_statement(alpha: float, delta: float) -> str:
+def guarantee_statement(alpha: float, delta: float, one_per_case: bool = False) -> str:
+    unit = (
+        "for cases exchangeable with the calibration cases (certified on one decision per case)"
+        if one_per_case
+        else "for data exchangeable with the calibration set"
+    )
     return (
         f"With probability >= {1 - delta:.0%} over the calibration draw, the error rate among "
-        f"decisions marked 'automate' is <= {alpha:.0%}, for data exchangeable with the "
-        f"calibration set. Everything else is marked 'escalate'."
+        f"decisions marked 'automate' is <= {alpha:.0%}, {unit}. Everything else is marked 'escalate'."
     )
+
+
+class ClusteredCalibrationWarning(UserWarning):
+    """Calibration decisions repeat cases, and the certificate treats them as independent."""
+
+
+def certify_rules(
+    confidence: Sequence[float],
+    correct: Sequence[bool],
+    cases: Sequence[str],
+    alpha: float,
+    delta: float,
+    alphas: Sequence[float] = (0.05, 0.10, 0.20),
+    one_per_case: bool = False,
+    seed: int = 0,
+) -> tuple[list[dict], dict]:
+    """Certify a rule at every level in ``alphas`` (plus ``alpha``) from top-option confidences and correctness.
+
+    ``cases`` gives the case of each decision. With ``one_per_case`` the rules are certified
+    on one seeded-random decision per case, which is valid when whole cases are exchangeable.
+    Otherwise every decision is a unit, which assumes decisions are exchangeable; when cases
+    repeat that is optimistic, and a :class:`ClusteredCalibrationWarning` says so.
+
+    Returns the rules (each with its ``statement``) and what they were certified on.
+    """
+    confidence = np.asarray(confidence, dtype=float)
+    correct = np.asarray(correct, dtype=bool)
+    cases = list(cases)
+    n_cases = len(set(cases))
+    if one_per_case:
+        idx = pick_one_per_case(cases, seed=seed)
+        confidence, correct = confidence[idx], correct[idx]
+    elif n_cases < len(cases):
+        warnings.warn(
+            f"the {len(cases)} calibration decisions come from {n_cases} cases. Questions about one case are "
+            "correlated, but the certificate treats every decision as independent, so it can be optimistic. "
+            "To certify on one random decision per case instead (valid when cases are exchangeable), pass "
+            "one_per_case=True (safedecide calibrate --one-per-case). See docs/METHOD.md, section 2.",
+            ClusteredCalibrationWarning,
+            stacklevel=3,
+        )
+    rules = []
+    for a in sorted({*alphas, alpha}):
+        rule_d = calibrate_selective(confidence, correct, a, delta).to_dict()
+        rule_d["statement"] = guarantee_statement(a, delta, one_per_case)
+        rules.append(rule_d)
+    return rules, {"n_selective": len(confidence), "n_cases": n_cases, "one_per_case": one_per_case}
 
 
 def calibrate_checkpoint(
@@ -46,6 +98,7 @@ def calibrate_checkpoint(
     alphas: Sequence[float] = (0.05, 0.10, 0.20),
     keep_temperatures: bool = False,
     revision: str | None = None,
+    one_per_case: bool = False,
 ) -> dict:
     """Fit per-kind temperatures on one half of the calibration set and the
     selective threshold on the other half (disjoint by case, so the guarantee is valid).
@@ -63,6 +116,10 @@ def calibrate_checkpoint(
     A rule is certified at every level in ``alphas`` (plus ``alpha``), each a
     separate guarantee; ``alpha`` is the default one. Pick the level from your
     error budget, not from which level automates most.
+
+    ``one_per_case`` certifies the thresholds on one decision per case (drawn with
+    ``seed``), valid when cases are exchangeable; by default every decision counts,
+    and repeated cases raise a :class:`ClusteredCalibrationWarning` (see :func:`certify_rules`).
 
     Where the result is written:
 
@@ -96,7 +153,7 @@ def calibrate_checkpoint(
         temps = dict(decider.temperatures)
     else:
         if temperature_set is None:
-            temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed)  # one case stays on one side
+            temp_set, conf_set = split_by_group(cal, temp_fraction, seed=seed, key=case_of)  # a case stays on one side
         else:
             temp_set, conf_set = list(temperature_set), cal
         logits_t = decider.logits(temp_set)
@@ -106,11 +163,9 @@ def calibrate_checkpoint(
     probs_c = calibrated_probs(decider.logits(conf_set), conf_set, temps, decider.question_bias)
     conf = top_confidence(probs_c)
     correct = np.array([int(p.argmax()) == d.label for p, d in zip(probs_c, conf_set)])
-    rules = []
-    for a in sorted({*alphas, alpha}):
-        rule_d = calibrate_selective(conf, correct, a, delta).to_dict()
-        rule_d["statement"] = guarantee_statement(a, delta)
-        rules.append(rule_d)
+    rules, certified_on = certify_rules(
+        conf, correct, [case_of(d) for d in conf_set], alpha, delta, alphas, one_per_case, seed
+    )
 
     decider.config.update(
         {
@@ -120,7 +175,7 @@ def calibrate_checkpoint(
             "calibration": {
                 "n_temperature": len(temp_set),
                 "temperatures_kept": keep_temperatures,
-                "n_selective": len(conf_set),
+                **certified_on,
                 "sources": dict(Counter(d.source or "unknown" for d in cal)),
             },
         }

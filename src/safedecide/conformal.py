@@ -1,9 +1,14 @@
 """Distribution-free guarantees for decision models.
 
 Two complementary tools. Both only need a held-out calibration set of
-labelled decisions and assume calibration and deployment data are
-exchangeable (i.i.d. from the same distribution). They make **no**
-assumption that the model's probabilities are calibrated.
+labelled decisions and assume the units they certify are exchangeable between
+calibration and deployment. They make **no** assumption that the model's
+probabilities are calibrated.
+
+The units are the rows passed in. Several questions about one case are
+correlated, so treating them as separate rows is an approximation that can make
+the bound optimistic; :func:`one_per_case` keeps one random decision per case,
+which is valid when whole cases are exchangeable (docs/METHOD.md, section 2).
 
 1. Selective risk control ("automate or escalate")
    Find a confidence threshold lambda such that, with probability >= 1-delta
@@ -100,6 +105,19 @@ def calibrate_selective(
     return best
 
 
+def one_per_case(cases: Sequence, seed: int = 0) -> np.ndarray:
+    """Positions of one decision per case, drawn uniformly at random within each case (seeded).
+
+    Certify on ``confidence[idx], correct[idx]`` to rely on exchangeable cases rather than
+    exchangeable decisions. Positions come back in input order.
+    """
+    members: dict = {}
+    for i, c in enumerate(cases):
+        members.setdefault(c, []).append(i)
+    rng = np.random.default_rng(seed)
+    return np.sort(np.array([m[int(rng.integers(len(m)))] for m in members.values()], dtype=int))
+
+
 def apply_selective(rule: SelectiveRule, confidence: np.ndarray, correct: np.ndarray) -> dict:
     confidence = np.asarray(confidence, dtype=float)
     correct = np.asarray(correct, dtype=bool)
@@ -125,6 +143,7 @@ def automation_at_alpha(
     seed: int = 0,
     groups: Sequence[str] | None = None,
     starts: Sequence[float] | None = DEFAULT_STARTS,
+    one_per_case: bool = False,
 ) -> dict:
     """Repeated random cal/test splits on one labelled pool.
 
@@ -134,9 +153,13 @@ def automation_at_alpha(
 
     With ``groups`` (e.g. the case each question belongs to) a whole group goes
     to one side of the split, so correlated questions never straddle cal and test.
+    With ``one_per_case`` the threshold is certified on one random decision of each
+    calibration group (see :func:`one_per_case`) and applied to every test decision.
     """
     confidence = np.asarray(confidence, dtype=float)
     correct = np.asarray(correct, dtype=bool)
+    if one_per_case and groups is None:
+        raise ValueError("one_per_case needs groups (the case of each decision)")
     rng = np.random.default_rng(seed)
     if groups is None:
         members = [np.array([i]) for i in range(len(confidence))]
@@ -149,7 +172,11 @@ def automation_at_alpha(
     for _ in range(n_splits):
         perm = rng.permutation(len(members))
         cut = int(len(members) * cal_fraction)
-        cal = np.concatenate([members[j] for j in perm[:cut]])
+        cal_groups = [members[j] for j in perm[:cut]]
+        if one_per_case:
+            cal = np.array([m[rng.integers(len(m))] for m in cal_groups], dtype=int)
+        else:
+            cal = np.concatenate(cal_groups)
         test = np.concatenate([members[j] for j in perm[cut:]])
         rule = calibrate_selective(confidence[cal], correct[cal], alpha, delta, starts=starts)
         res = apply_selective(rule, confidence[test], correct[test])

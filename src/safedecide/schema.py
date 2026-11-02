@@ -137,6 +137,15 @@ def decisions_from_systemone_request(request: dict[str, Any]) -> list[Decision]:
     return out
 
 
+def case_of(d: Decision) -> str:
+    """The case a decision belongs to: its ``case`` field when it has one, otherwise its state.
+
+    Questions about one case are correlated, so splits keep a case on one side and
+    ``one_per_case`` certification keeps one decision of each.
+    """
+    return str(d.meta.get("case") or d.state)
+
+
 def noul_answer(answer: Any) -> str:
     """``"true"`` or ``"false"`` for a labelled yes/no answer; raises ``ValueError`` on anything else.
 
@@ -163,7 +172,9 @@ def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
     ``noul`` one of the spellings :func:`noul_answer` accepts (true/false, yes/no, 1/0, in
     any case, or a JSON boolean). Anything else raises ``ValueError`` naming the line.
 
-    Questions sharing a ``state`` stay on the same side of every calibration split.
+    Questions sharing a ``state`` are one case (see :func:`case_of`): they stay on the same
+    side of every calibration split. An optional ``"case"`` field (a ticket id, say) names
+    the case explicitly, for questions about one case whose states differ.
     """
     import json
 
@@ -186,6 +197,8 @@ def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
                 raise ValueError(f"{path}:{n}: {detail}") from e
             d.target = [1.0 if o == answer else 0.0 for o in d.options]
             d.source = "jsonl"
+            if row.get("case") is not None:
+                d.meta["case"] = str(row["case"])
             out.append(d)
     if not out:
         raise ValueError(f"{path} holds no decisions")

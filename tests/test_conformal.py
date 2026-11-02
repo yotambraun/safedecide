@@ -1,5 +1,7 @@
 import numpy as np
 
+import pytest
+
 from safedecide.conformal import (
     DEFAULT_GRID,
     apply_selective,
@@ -8,6 +10,7 @@ from safedecide.conformal import (
     clopper_pearson_upper,
     conformal_set_stats,
     lac_qhat,
+    one_per_case,
 )
 
 
@@ -128,3 +131,50 @@ def test_bootstrap_ci_brackets_point_estimate():
     point = summarize(probs, targets)
     for k in ("accuracy", "nll", "brier"):
         assert ci[k][0] <= point[k] <= ci[k][1]
+
+
+def test_one_per_case_keeps_one_seeded_random_decision_per_case():
+    cases = ["a", "a", "b", "c", "c", "c", "b"]
+    idx = one_per_case(cases, seed=0)
+    assert sorted(cases[i] for i in idx) == ["a", "b", "c"]
+    assert list(idx) == sorted(idx)  # input order is kept
+    assert np.array_equal(idx, one_per_case(cases, seed=0))  # reproducible
+    picks = {tuple(one_per_case(cases, seed=s)) for s in range(50)}
+    assert len(picks) > 1  # random within a case, not always the first
+    assert list(one_per_case(["x", "y", "z"])) == [0, 1, 2]
+
+
+def _clustered(n_cases, rng, size=5):
+    """The extreme of clustering: every question about a case shares its confidence and its outcome."""
+    conf = rng.uniform(0.5, 1.0, n_cases)
+    correct = rng.uniform(0, 1, n_cases) < conf
+    return np.repeat(conf, size), np.repeat(correct, size), np.repeat(np.arange(n_cases), size)
+
+
+def test_one_per_case_stays_valid_on_clustered_data_where_all_rows_do_not():
+    """Correlated questions make the all-rows certificate optimistic; one decision per case restores it."""
+    alpha, delta, trials = 0.1, 0.1, 300
+    rng = np.random.default_rng(11)
+    c_pop, k_pop, _ = _clustered(200_000, rng, size=1)
+
+    def violation_rate(pick_one):
+        violations = 0
+        for _ in range(trials):
+            c, k, cases = _clustered(400, rng)
+            idx = one_per_case(cases, seed=int(rng.integers(1 << 31))) if pick_one else slice(None)
+            rule = calibrate_selective(c[idx], k[idx], alpha, delta)
+            if np.isfinite(rule.threshold):
+                violations += int((~k_pop[c_pop >= rule.threshold]).mean() > alpha)
+        return violations / trials
+
+    assert violation_rate(pick_one=True) <= delta + 0.03  # Monte Carlo slack
+    assert violation_rate(pick_one=False) > delta + 0.03  # about 0.17 here
+
+
+def test_automation_at_alpha_one_per_case_needs_groups():
+    c, k = _synthetic(1000)
+    groups = [str(i // 5) for i in range(1000)]
+    out = automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, groups=groups, one_per_case=True)
+    assert 0 <= out["automation_rate_mean"] <= 1
+    with pytest.raises(ValueError, match="groups"):
+        automation_at_alpha(c, k, 0.1, 0.1, n_splits=5, one_per_case=True)

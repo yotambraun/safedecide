@@ -87,6 +87,7 @@ def cmd_calibrate(a):
         output_dir=a.output_dir,
         keep_temperatures=keep,
         revision=a.revision,
+        one_per_case=a.one_per_case,
     )
     print(json.dumps({k: cfg[k] for k in ("temperatures", "selective_rules")}, indent=2))
     print(f"Calibrated copy: {cfg['path']}")
@@ -207,6 +208,11 @@ def main(argv=None) -> None:
         "--refit-temperatures",
         action="store_true",
         help="with --data: spend half of it refitting temperatures (default: keep the model's)",
+    )
+    s.add_argument(
+        "--one-per-case",
+        action="store_true",
+        help="certify on one random decision per case (lines sharing a state or 'case'): valid for exchangeable cases",
     )
     s.add_argument("--alpha", type=float, default=0.1, help="default error level (5%%, 10%%, 20%% are all certified)")
     s.add_argument("--delta", type=float, default=0.1)

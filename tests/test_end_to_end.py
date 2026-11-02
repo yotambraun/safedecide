@@ -146,10 +146,21 @@ def test_full_pipeline(tiny, tmp_path):
     ]
     mine = tmp_path / "mine.jsonl"
     mine.write_text("\n".join(json.dumps(r) for r in lines), encoding="utf-8")
-    main(["calibrate", "--model", best, "--data", str(mine), "--in-place"])
+    from safedecide.pipeline import ClusteredCalibrationWarning
+
+    with pytest.warns(ClusteredCalibrationWarning):  # several lines share a state
+        main(["calibrate", "--model", best, "--data", str(mine), "--in-place"])
     calibration = load_config(best)["calibration"]
     assert calibration["sources"] == {"jsonl": len(lines)}
     assert calibration["temperatures_kept"] and calibration["n_selective"] == len(lines)  # all of it to the threshold
+    n_cases = len({r["state"] for r in lines})
+    assert calibration["n_cases"] == n_cases < len(lines) and not calibration["one_per_case"]
+
+    one = tmp_path / "one-per-case"
+    main(["calibrate", "--model", best, "--data", str(mine), "--output-dir", str(one), "--one-per-case"])
+    calibration = load_config(str(one))["calibration"]
+    assert calibration["one_per_case"] and calibration["n_selective"] == n_cases
+    assert all(r["n_calibration"] == n_cases for r in load_config(str(one))["selective_rules"])
     assert config["selective_rule"]["alpha"] == 0.1
 
     decider = SafeDecider.from_pretrained(best, device="cpu")

@@ -205,6 +205,11 @@ the typed-decisions test split.
   knowledge belong to a generative model.
 * The guarantee is marginal over the calibration distribution, not per class
   and not per customer.
+* The thresholds above count each calibration decision as an independent unit, but
+  the calibration carve asks five correlated questions about each of its cases, so the
+  certificate can be optimistic. `safedecide calibrate --one-per-case` certifies on one
+  decision per case instead, valid for exchangeable cases, at a large cost in automation
+  ([method](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md#2-the-guarantee-selective-risk-control)).
 * English-first; the base encoder is multilingual (1800+ languages) but other
   languages are not evaluated here.
 * Not for fully automated decisions with legal, medical, financial or
