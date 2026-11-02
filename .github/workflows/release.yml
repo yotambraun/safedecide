@@ -28,7 +28,7 @@ jobs:
           uv venv /tmp/smoke
           uv pip install --python /tmp/smoke torch --index-url https://download.pytorch.org/whl/cpu
           uv pip install --python /tmp/smoke dist/*.whl
-          /tmp/smoke/bin/python -c "import safedecide; print(safedecide.__version__)"
+          /tmp/smoke/bin/python scripts/smoke_installed.py  # package data and the offline API, no model download
           /tmp/smoke/bin/safedecide --help > /dev/null
       - uses: actions/upload-artifact@v7
         with:

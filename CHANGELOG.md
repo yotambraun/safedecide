@@ -42,6 +42,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The release workflow's wheel smoke test runs `scripts/smoke_installed.py`: it checks the
+  package was imported from the install, that the model card template and `py.typed` are in
+  the wheel, and renders a card, reads labelled JSONL and certifies a rule, all offline.
 - docs/METHOD.md stated that calibration decisions are i.i.d. draws. The assumption the
   bound uses is exchangeability of the units it certifies; questions about one case are
   correlated, and with each decision counted as a unit the Clopper–Pearson bound can be
