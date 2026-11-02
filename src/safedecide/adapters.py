@@ -11,6 +11,8 @@ its confidence, so they stay exact; NLL/Brier for such models are approximate.
 from __future__ import annotations
 
 import json
+import random
+import time
 from collections.abc import Sequence
 from typing import Any, Protocol
 
@@ -89,8 +91,23 @@ def parse_systemone_answer(d: Decision, ans: dict[str, Any]) -> np.ndarray:
     raise ValueError(f"cannot parse answer for {d.id}: {json.dumps(ans)[:200]}")
 
 
+# Worth another try: request timeout, too early, rate limited, and the 5xx a restarting server returns.
+RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
 class SystemOneHTTPAdapter:
-    """Any server speaking ``POST /v1/systemone`` (Jev, Clef, d3/vLLM, jevos, ollajev...)."""
+    """Any server speaking ``POST /v1/systemone`` (Jev, Clef, d3/vLLM, jevos, ollajev, ``safedecide serve``...).
+
+    One request per decision, ``{"state": ..., "questions": {"q": {...}}}`` (plus ``"model"``
+    when given), sent by up to ``max_concurrency`` threads at a time. A decision read from
+    labelled JSONL is sent with its ``state`` and ``question`` exactly as written there.
+    The answer is read from ``answers.q`` by :func:`parse_systemone_answer`.
+
+    ``timeout`` is in seconds per request. Connection errors, timeouts and HTTP 408, 425,
+    429 and 5xx responses are retried up to ``retries`` times, waiting ``backoff * 2**attempt``
+    seconds (with jitter, or the server's ``Retry-After``, at most 60 s) in between; any other
+    HTTP error is raised at once. Results come back in input order.
+    """
 
     def __init__(
         self,
@@ -99,7 +116,12 @@ class SystemOneHTTPAdapter:
         name: str | None = None,
         headers: dict | None = None,
         timeout: float = 60.0,
+        max_concurrency: int = 4,
+        retries: int = 3,
+        backoff: float = 0.5,
     ):
+        if max_concurrency < 1 or retries < 0 or backoff < 0 or timeout <= 0:
+            raise ValueError("need max_concurrency >= 1, retries >= 0, backoff >= 0 and timeout > 0")
         self.url = url.rstrip("/")
         if not self.url.endswith("/v1/systemone"):
             self.url += "/v1/systemone"
@@ -107,20 +129,70 @@ class SystemOneHTTPAdapter:
         self.name = name or model or url
         self.headers = headers or {}
         self.timeout = timeout
+        self.max_concurrency = max_concurrency
+        self.retries = retries
+        self.backoff = backoff
 
-    def predict_proba(self, decisions):
+    def request_body(self, d: Decision) -> dict[str, Any]:
+        written = d.meta.get("systemone")
+        if written:
+            body: dict[str, Any] = {"state": written["state"], "questions": {"q": written["question"]}}
+        else:
+            body = {"state": d.state, "questions": {"q": decision_to_systemone_question(d)}}
+        if self.model:
+            body["model"] = self.model
+        return body
+
+    def _wait(self, attempt: int, response=None) -> None:
+        delay = self.backoff * 2**attempt * random.uniform(0.5, 1.0)
+        retry_after = response.headers.get("Retry-After") if response is not None else None
+        if retry_after is not None:
+            try:
+                delay = float(retry_after)
+            except ValueError:  # an HTTP date: keep our own backoff
+                pass
+        time.sleep(min(max(delay, 0.0), 60.0))
+
+    def _post(self, client, body: dict[str, Any]) -> dict[str, Any]:
         import httpx
 
-        out = []
-        with httpx.Client(timeout=self.timeout, headers=self.headers) as client:
-            for d in decisions:
-                body = {"state": d.state, "questions": {"q": decision_to_systemone_question(d)}}
-                if self.model:
-                    body["model"] = self.model
+        for attempt in range(self.retries + 1):
+            last = attempt == self.retries
+            try:
                 r = client.post(self.url, json=body)
-                r.raise_for_status()
-                out.append(parse_systemone_answer(d, r.json()["answers"]["q"]))
-        return out
+            except httpx.TransportError:  # connection errors and timeouts
+                if last:
+                    raise
+                self._wait(attempt)
+                continue
+            if r.status_code in RETRY_STATUS and not last:
+                self._wait(attempt, r)
+                continue
+            r.raise_for_status()
+            return r.json()
+        raise AssertionError("unreachable")
+
+    def predict_proba(self, decisions):
+        from concurrent.futures import ThreadPoolExecutor
+
+        import httpx
+
+        limits = httpx.Limits(max_connections=self.max_concurrency)
+        with httpx.Client(timeout=self.timeout, headers=self.headers, limits=limits) as client:
+
+            def one(d: Decision) -> np.ndarray:
+                data = self._post(client, self.request_body(d))
+                try:
+                    answer = data["answers"]["q"]
+                except (KeyError, TypeError) as e:
+                    raise ValueError(f"{self.url}: the response for {d.id} has no answers.q") from e
+                return parse_systemone_answer(d, answer)
+
+            pool = ThreadPoolExecutor(max_workers=self.max_concurrency)
+            try:
+                return list(pool.map(one, decisions))
+            finally:  # on an error, drop the requests not sent yet
+                pool.shutdown(wait=True, cancel_futures=True)
 
 
 class PhocinaeAdapter:

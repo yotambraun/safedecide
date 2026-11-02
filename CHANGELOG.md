@@ -24,6 +24,16 @@ All notable changes to this project are documented here. The format follows
   Lines) from a file or stdin, and prints each result as JSON with every answer's
   probabilities, its `action` (automate or escalate) and the `guarantee`; `--alpha` picks a
   certified level, `--revision` a Hub revision, `--jsonl` forces one line per result.
+- `safedecide calibrate --http URL --data mine.jsonl --output rule.json` (and
+  `pipeline.calibrate_adapter`): certify thresholds for a model you already serve behind
+  `/v1/systemone`, on its own probabilities, and write them to a rule file. Each labelled line
+  is sent with its `state` and `question` exactly as written. The request/response contract
+  and the rule file are documented in docs/INTEGRATIONS.md.
+- `SystemOneHTTPAdapter`: bounded concurrency (`max_concurrency`, default 4), a per-request
+  `timeout`, and retries with exponential backoff and jitter (`retries`, `backoff`) on
+  connection errors, timeouts, 408, 425, 429 and 5xx, honouring `Retry-After`. Results keep
+  input order. `safedecide benchmark --http` uses the same defaults, so it now sends up to
+  4 requests at a time instead of one.
 - `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
   cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
   `n_cases` and `one_per_case`.

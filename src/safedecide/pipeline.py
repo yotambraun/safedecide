@@ -189,6 +189,47 @@ def calibrate_checkpoint(
     return {**decider.config, "path": str(path)}
 
 
+def calibrate_adapter(
+    adapter,
+    decisions: Sequence[Decision],
+    alpha: float = 0.1,
+    delta: float = 0.1,
+    alphas: Sequence[float] = (0.05, 0.10, 0.20),
+    one_per_case: bool = False,
+    seed: int = 0,
+) -> dict:
+    """Certify automate/escalate thresholds for a model you already run, from its own probabilities.
+
+    ``adapter`` is any :class:`~safedecide.adapters.DecisionAdapter`, e.g. a
+    :class:`~safedecide.adapters.SystemOneHTTPAdapter` for an HTTP endpoint. Each labelled
+    decision is sent once; the confidence is the top option's probability and an answer is
+    correct when that option is the label. Nothing is refitted, so every decision goes to
+    the threshold. Apply the result as: automate when the model's top probability is at
+    least ``threshold`` (``None``: nothing could be certified, escalate everything).
+
+    Returns the rule file's contents: ``selective_rule`` (the ``alpha`` one),
+    ``selective_rules`` and ``calibration``, as in a checkpoint's ``safedecide_config.json``.
+    """
+    decisions = list(decisions)
+    probs = adapter.predict_proba(decisions)
+    conf = top_confidence(probs)
+    correct = np.array([int(p.argmax()) == d.label for p, d in zip(probs, decisions)])
+    rules, certified_on = certify_rules(
+        conf, correct, [case_of(d) for d in decisions], alpha, delta, alphas, one_per_case, seed
+    )
+    return {
+        "model": getattr(adapter, "model", None) or getattr(adapter, "name", None),
+        "selective_rule": next(r for r in rules if r["alpha"] == alpha),
+        "selective_rules": rules,
+        "calibration": {
+            **certified_on,
+            "n_decisions": len(decisions),
+            "accuracy": float(correct.mean()),
+            "sources": dict(Counter(d.source or "unknown" for d in decisions)),
+        },
+    }
+
+
 def _calibration_target(path: str, output_dir: str | None, revision: str | None) -> tuple[str, bool]:
     """The folder :func:`calibrate_checkpoint` writes to, and whether that is the source checkpoint itself."""
     from .predict import resolve_model_dir

@@ -258,6 +258,21 @@ With several questions per case, `idx = safedecide.one_per_case(case_ids)` and
 `import safedecide` and these statistics do not load torch or transformers; only
 `SafeDecider`, which runs a model, does, on first use.
 
+## Certify a model you already run
+
+If your decision model is served behind `/v1/systemone`, certify a threshold on its own
+probabilities with the same labelled file, without running SafeDecide's model:
+
+```bash
+safedecide calibrate --http http://localhost:8000 --data my_decisions.jsonl --output rule.json
+```
+
+Each line is sent as one request, with bounded concurrency, timeouts and retries
+(`--concurrency`, `--timeout`, `--retries`, `--header`). `rule.json` holds the certified
+threshold per budget: automate when the model's top probability is at least that
+threshold. [docs/INTEGRATIONS.md](https://github.com/yotambraun/safedecide/blob/main/docs/INTEGRATIONS.md)
+has the exact request and response contract and the rule file's format.
+
 ## Measure any decision model
 
 `safedecide benchmark` scores any server that speaks `/v1/systemone` on typed-decisions

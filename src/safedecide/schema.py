@@ -197,6 +197,7 @@ def labelled_decisions_from_jsonl(path: str) -> list[Decision]:
                 raise ValueError(f"{path}:{n}: {detail}") from e
             d.target = [1.0 if o == answer else 0.0 for o in d.options]
             d.source = "jsonl"
+            d.meta["systemone"] = {"state": row["state"], "question": row["question"]}  # as written, for HTTP models
             if row.get("case") is not None:
                 d.meta["case"] = str(row["case"])
             out.append(d)

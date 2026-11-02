@@ -2,7 +2,8 @@
 
 safedecide data        --profile clean
 safedecide train       --config configs/base.yaml
-safedecide calibrate   --model yotambr/safedecide-140m --data my_decisions.jsonl
+safedecide calibrate   --model yotambr/safedecide-140m --data my_decisions.jsonl --output-dir mine
+safedecide calibrate   --http http://localhost:8000 --data my_decisions.jsonl --output rule.json
 safedecide decide      --model yotambr/safedecide-140m request.json   (or JSONL; '-' or nothing reads stdin)
 safedecide benchmark   --model runs/base/best [--http URL] [--phocinae URL]
 safedecide export      --model runs/base/best
@@ -18,6 +19,7 @@ import json
 import sys
 from pathlib import Path
 
+DEFAULT_RULE_FILE = "safedecide_rule.json"
 REVISION_HELP = "Hub branch, tag or commit hash to load (e.g. v0.2); pin a commit for reproducible thresholds"
 
 
@@ -60,10 +62,54 @@ def cmd_train(a):
     print(json.dumps(train(cfg, tr, va), indent=2)[:2000])
 
 
+def _calibrate_http(a):
+    from . import __version__
+    from .adapters import SystemOneHTTPAdapter
+    from .pipeline import calibrate_adapter
+    from .schema import labelled_decisions_from_jsonl
+
+    if not a.data:
+        raise SystemExit("safedecide calibrate: --http needs --data, your labelled decisions")
+    for flag, used in (
+        ("--output-dir", a.output_dir),
+        ("--in-place", a.in_place),
+        ("--refit-temperatures", a.refit_temperatures),
+        ("--revision", a.revision),
+    ):
+        if used:
+            raise SystemExit(f"safedecide calibrate: {flag} applies to --model, not to --http")
+    headers = {}
+    for h in a.header or []:
+        name, sep, value = h.partition(":")
+        if not sep or not name.strip():
+            raise SystemExit(f"safedecide calibrate: --header {h!r} is not 'Name: value'")
+        headers[name.strip()] = value.strip()
+    adapter = SystemOneHTTPAdapter(
+        a.http,
+        model=a.http_model,
+        headers=headers,
+        timeout=a.timeout,
+        max_concurrency=a.concurrency,
+        retries=a.retries,
+    )
+    result = calibrate_adapter(
+        adapter, labelled_decisions_from_jsonl(a.data), a.alpha, a.delta, one_per_case=a.one_per_case, seed=a.seed
+    )
+    rule_file = {"safedecide_version": __version__, "endpoint": adapter.url, **result}  # headers are not saved
+    Path(a.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(a.output).write_text(json.dumps(rule_file, indent=2), encoding="utf-8")
+    print(json.dumps({k: rule_file[k] for k in ("selective_rules", "calibration")}, indent=2))
+    print(f"Rule file: {a.output}")
+
+
 def cmd_calibrate(a):
     from .pipeline import calibrate_checkpoint
     from .schema import labelled_decisions_from_jsonl
 
+    if a.http:
+        return _calibrate_http(a)
+    if a.output != DEFAULT_RULE_FILE or a.header or a.http_model:
+        raise SystemExit("safedecide calibrate: --output, --header and --http-model apply to --http")
     if Path(a.model).is_dir() and not a.output_dir and not a.in_place:
         raise SystemExit(
             f"safedecide calibrate: {a.model} is a local checkpoint. Pass --output-dir DIR to write a "
@@ -242,8 +288,16 @@ def main(argv=None) -> None:
     s.add_argument("--max-rows", type=int)
     s.set_defaults(fn=cmd_train)
 
-    s = sub.add_parser("calibrate", help="certify automate/escalate thresholds on labelled decisions")
-    s.add_argument("--model", required=True, help="local checkpoint or Hub repo id")
+    s = sub.add_parser(
+        "calibrate",
+        help="certify automate/escalate thresholds on labelled decisions",
+        description="Certify automate/escalate thresholds on labelled decisions, for a SafeDecide checkpoint "
+        "(--model; writes the thresholds next to its weights) or for any model behind a /v1/systemone "
+        "endpoint (--http; writes a rule file).",
+    )
+    target = s.add_mutually_exclusive_group(required=True)
+    target.add_argument("--model", help="local checkpoint or Hub repo id")
+    target.add_argument("--http", help="URL of a /v1/systemone endpoint to certify (see README for the contract)")
     s.add_argument("--revision", help=REVISION_HELP)
     s.add_argument("--data", help="your labelled decisions, one JSON object per line (see README)")
     s.add_argument(
@@ -265,6 +319,15 @@ def main(argv=None) -> None:
     s.add_argument("--delta", type=float, default=0.1)
     s.add_argument("--max-rows", type=int, default=8000)
     s.add_argument("--seed", type=int, default=0)
+    http = s.add_argument_group("with --http")
+    http.add_argument("--output", default=DEFAULT_RULE_FILE, help="rule file to write (default: %(default)s)")
+    http.add_argument("--http-model", help="'model' field to send in every request")
+    http.add_argument("--header", action="append", help="request header 'Name: value' (repeatable); not saved")
+    http.add_argument("--concurrency", type=int, default=4, help="requests in flight at once (default: %(default)s)")
+    http.add_argument("--timeout", type=float, default=60.0, help="seconds per request (default: %(default)s)")
+    http.add_argument(
+        "--retries", type=int, default=3, help="retries on errors, timeouts, 429 and 5xx (default: %(default)s)"
+    )
     s.set_defaults(fn=cmd_calibrate)
 
     s = sub.add_parser(
