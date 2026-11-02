@@ -10,6 +10,7 @@ safedecide export      --model runs/base/best
 safedecide card        --model runs/base/best --repo you/safedecide-140m --results results.json
 safedecide push        --model runs/base/best --repo you/safedecide-140m
 safedecide serve       --model runs/base/best
+safedecide mcp         --model yotambr/safedecide-140m   (MCP server on stdio, for agents)
 """
 
 from __future__ import annotations
@@ -271,6 +272,12 @@ def cmd_serve(a):
     serve(a.model, a.host, a.port, revision=a.revision)
 
 
+def cmd_mcp(a):
+    from .mcp_server import serve
+
+    serve(a.model, alpha=a.alpha, revision=a.revision)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(
         prog="safedecide", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -380,6 +387,18 @@ def main(argv=None) -> None:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8177)
     s.set_defaults(fn=cmd_serve)
+
+    s = sub.add_parser(
+        "mcp",
+        help="serve decide and rule as MCP tools over stdio (needs safedecide[mcp])",
+        description="An MCP server over stdio for agents (Claude Code, Cursor, ...): a 'decide' tool that "
+        "answers typed questions with automate/escalate and the guarantee, and a read-only 'rule' tool "
+        "that explains the certified rule. The error budget is fixed here, not by the agent.",
+    )
+    s.add_argument("--model", required=True, help="local checkpoint or Hub repo id")
+    s.add_argument("--revision", help=REVISION_HELP)
+    s.add_argument("--alpha", type=float, help="certified error level to apply (default: the model's default)")
+    s.set_defaults(fn=cmd_mcp)
 
     args = p.parse_args(argv)
     args.fn(args)

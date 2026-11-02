@@ -40,7 +40,8 @@ data = ["datasets>=2.19"]
 export = ["onnx>=1.16", "onnxruntime>=1.18"]
 serve = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
 report = ["matplotlib>=3.8"]
-all = ["safedecide[data,export,serve,report]"]
+mcp = ["mcp>=2.0,<3"]
+all = ["safedecide[data,export,serve,report,mcp]"]
 
 [project.scripts]
 safedecide = "safedecide.cli:main"

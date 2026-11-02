@@ -108,3 +108,72 @@ automate = threshold is not None and confidence >= threshold  # confidence: the 
 
 The guarantee covers the endpoint as it was certified: the same model, prompt and settings,
 on traffic exchangeable with the labelled file. Re-certify after changing any of them.
+
+## 3. MCP server for agents
+
+`safedecide mcp` serves a SafeDecide model to MCP clients (Claude Code, Cursor and others)
+over stdio. It needs the `mcp` extra (`pip install "safedecide[mcp]"`, mcp SDK 2.x) and
+offers two tools; neither changes anything:
+
+| Tool | Input | Returns |
+|---|---|---|
+| `decide` | `state` (object or text) and `questions` (`{id: {"type", "instructions", "criteria"}}`, as in a `/v1/systemone` request) | per question its probabilities, confidence and `action` (`automate` or `escalate`), plus the `guarantee` |
+| `rule` | none | the error budget in use, its threshold, every certified level and what the calibration data was, with a plain explanation |
+
+A malformed request comes back as a tool error that says what is wrong.
+
+The error budget is chosen when the server starts (`--alpha`; default: the model's default
+level) and a budget the model was never certified at stops the server at start-up. The agent
+cannot loosen it per call, and there is deliberately no tool to re-certify: certifying needs
+labelled data and rewrites the thresholds, which is a job for `safedecide calibrate`, not for
+the agent whose answers the rule is judging.
+
+The model is loaded once, at start-up. A Hub model is downloaded the first time, which can
+take longer than a client waits for a server to start; fetch it beforehand (for example with
+one `safedecide decide` call) or point `--model` at a local folder. Add
+`--revision <commit>` to pin the weights and thresholds.
+
+### Claude Code
+
+```bash
+claude mcp add --transport stdio safedecide -- safedecide mcp --model yotambr/safedecide-140m
+```
+
+Everything after `--` is the server's command line. Add `--scope project` to share it through
+the project's `.mcp.json`, which then holds:
+
+```json
+{
+  "mcpServers": {
+    "safedecide": {
+      "type": "stdio",
+      "command": "safedecide",
+      "args": ["mcp", "--model", "yotambr/safedecide-140m"]
+    }
+  }
+}
+```
+
+### Cursor
+
+The same entry in `.cursor/mcp.json` (this project) or `~/.cursor/mcp.json` (every project):
+
+```json
+{
+  "mcpServers": {
+    "safedecide": {
+      "type": "stdio",
+      "command": "safedecide",
+      "args": ["mcp", "--model", "yotambr/safedecide-140m"]
+    }
+  }
+}
+```
+
+`command` must be found by the client: use the full path of the `safedecide` executable in
+your virtual environment if it is not on the client's `PATH`, or let uv provide it with
+`"command": "uvx"` and `"args": ["--from", "safedecide[mcp]", "safedecide", "mcp", "--model",
+"yotambr/safedecide-140m"]` (safedecide 0.3.0 or newer).
+
+Configuration formats checked against the [Claude Code](https://code.claude.com/docs/en/mcp)
+and [Cursor](https://cursor.com/docs/context/mcp) documentation in November 2026.

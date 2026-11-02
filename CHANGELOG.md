@@ -34,6 +34,11 @@ All notable changes to this project are documented here. The format follows
   connection errors, timeouts, 408, 425, 429 and 5xx, honouring `Retry-After`. Results keep
   input order. `safedecide benchmark --http` uses the same defaults, so it now sends up to
   4 requests at a time instead of one.
+- `safedecide mcp` and the `mcp` extra (official MCP Python SDK 2.x, also in `all`): an MCP
+  server over stdio with two read-only tools, `decide` (probabilities, actions and the
+  guarantee for one request) and `rule` (the certified rule in use, explained). The error
+  budget is fixed at start-up (`--alpha`); there is no tool to re-certify. Setup for Claude
+  Code and Cursor is in docs/INTEGRATIONS.md.
 - `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
   cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
   `n_cases` and `one_per_case`.

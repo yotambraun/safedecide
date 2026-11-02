@@ -110,7 +110,8 @@ pip install "safedecide[all]"
 ```
 
 Python 3.11 or newer. The extras are `data` (dataset loaders), `export` (ONNX),
-`serve` (HTTP server) and `report` (figures); `all` installs them all.
+`serve` (HTTP server), `report` (figures) and `mcp` (MCP server for agents); `all`
+installs them all.
 
 The request below is a held-out customer-service case from typed-decisions, in the
 same `/v1/systemone` shape as Jev, Clef and d3:
@@ -272,6 +273,20 @@ Each line is sent as one request, with bounded concurrency, timeouts and retries
 threshold per budget: automate when the model's top probability is at least that
 threshold. [docs/INTEGRATIONS.md](https://github.com/yotambraun/safedecide/blob/main/docs/INTEGRATIONS.md)
 has the exact request and response contract and the rule file's format.
+
+## Use it from an agent (MCP)
+
+`safedecide mcp --model yotambr/safedecide-140m` serves the model to MCP clients such as
+Claude Code and Cursor over stdio, with a `decide` tool (answers, actions and the
+guarantee) and a read-only `rule` tool that explains the certified rule. The error budget
+is set when the server starts, not by the agent. In Claude Code:
+
+```bash
+claude mcp add --transport stdio safedecide -- safedecide mcp --model yotambr/safedecide-140m
+```
+
+The Cursor configuration and the tools' details are in
+[docs/INTEGRATIONS.md](https://github.com/yotambraun/safedecide/blob/main/docs/INTEGRATIONS.md#3-mcp-server-for-agents).
 
 ## Measure any decision model
 
