@@ -6,13 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.3.0] - Unreleased
 
+No model or threshold changes: the released weights, their certified thresholds and the
+published numbers are those of 0.2.0.
+
 ### Added
 
-- `revision=` on `SafeDecider.from_pretrained`, `calibrate_checkpoint`, `LocalAdapter` and
-  the server, and `--revision` on `safedecide calibrate` and `safedecide serve`: load a Hub
-  branch, tag or commit, e.g. the 140M repo's `v0.2` branch, or pin a commit so the weights
-  and their certified thresholds cannot change under you. A revision with a local folder is
-  an error rather than ignored.
 - `one_per_case` certification: `safedecide calibrate --one-per-case`,
   `calibrate_checkpoint(..., one_per_case=True)`, `pipeline.certify_rules` and
   `safedecide.one_per_case` (positions of one seeded-random decision per case) certify on
@@ -20,6 +18,16 @@ All notable changes to this project are documented here. The format follows
   may name its case with a `"case"` field (default: its state). `automation_at_alpha`
   takes `one_per_case=True` to measure the cost: on the saved typed-decisions `test`
   predictions of SafeDecide-140M v0.1, automation at a 10% budget falls from 32.4% to 3.9%.
+- `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
+  cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
+  `n_cases` and `one_per_case`, and a rule certified one per case says so in its
+  `statement`.
+
+- `revision=` on `SafeDecider.from_pretrained`, `calibrate_checkpoint`, `LocalAdapter` and
+  the server, and `--revision` on `safedecide calibrate` and `safedecide serve`: load a Hub
+  branch, tag or commit, e.g. the 140M repo's `v0.2` branch, or pin a commit so the weights
+  and their certified thresholds cannot change under you. A revision with a local folder is
+  an error rather than ignored.
 - `safedecide decide`: answers one `/v1/systemone` request (a JSON object) or many (JSON
   Lines) from a file or stdin, and prints each result as JSON with every answer's
   probabilities, its `action` (automate or escalate) and the `guarantee`; `--alpha` picks a
@@ -39,9 +47,6 @@ All notable changes to this project are documented here. The format follows
   guarantee for one request) and `rule` (the certified rule in use, explained). The error
   budget is fixed at start-up (`--alpha`); there is no tool to re-certify. Setup for Claude
   Code and Cursor is in docs/INTEGRATIONS.md.
-- `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
-  cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
-  `n_cases` and `one_per_case`.
 
 ### Fixed
 
@@ -61,18 +66,6 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- `import safedecide`, the statistics (`calibrate_selective`, `automation_at_alpha`,
-  `one_per_case`, ...), `safedecide.calibration` and `safedecide.pipeline` no longer import
-  torch or transformers; `safedecide.SafeDecider` loads them on first access. The public
-  API is unchanged.
-- Temperature and per-question bias fitting use SciPy's L-BFGS-B instead of torch's LBFGS.
-  On random test problems both reach the same optimum (temperatures within 1.5e-4
-  relative; SciPy's objective was never higher). Saved temperatures and thresholds are not
-  affected.
-- The package's project URLs list the 400M model next to the 140M one.
-- The release workflow's wheel smoke test runs `scripts/smoke_installed.py`: it checks the
-  package was imported from the install, that the model card template and `py.typed` are in
-  the wheel, and renders a card, reads labelled JSONL and certifies a rule, all offline.
 - docs/METHOD.md stated that calibration decisions are i.i.d. draws. The assumption the
   bound uses is exchangeability of the units it certifies; questions about one case are
   correlated, and with each decision counted as a unit the Clopper–Pearson bound can be
@@ -82,6 +75,19 @@ All notable changes to this project are documented here. The format follows
 - `safedecide calibrate --model <local folder>` needs `--output-dir DIR` (a re-calibrated
   copy) or `--in-place` (replace the thresholds in that folder); it no longer overwrites a
   local checkpoint by default.
+
+- `import safedecide`, the statistics (`calibrate_selective`, `automation_at_alpha`,
+  `one_per_case`, ...), `safedecide.calibration` and `safedecide.pipeline` no longer import
+  torch or transformers; `safedecide.SafeDecider` loads them on first access. The public
+  API is unchanged.
+- Temperature and per-question bias fitting use SciPy's L-BFGS-B instead of torch's LBFGS.
+  On random test problems both reach the same optimum (temperatures within 1.5e-4
+  relative; SciPy's objective was never higher). Saved temperatures and thresholds are not
+  affected.
+- The release workflow's wheel smoke test runs `scripts/smoke_installed.py`: it checks the
+  package was imported from the install, that the model card template and `py.typed` are in
+  the wheel, and renders a card, reads labelled JSONL and certifies a rule, all offline, and runs `--help` for each new subcommand.
+- The package's project URLs list the 400M model next to the 140M one.
 
 ## [0.2.0] - 2026-10-26
 
