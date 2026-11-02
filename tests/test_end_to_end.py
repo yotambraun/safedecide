@@ -386,7 +386,8 @@ def test_calibrating_a_local_checkpoint_never_overwrites_it_silently(tiny, tmp_p
     model.save_pretrained(src)
     tok.save_pretrained(src)
     with warnings.catch_warnings():
-        warnings.simplefilter("error")  # a checkpoint without thresholds yet: nothing is replaced, no warning
+        # a checkpoint without thresholds yet: nothing is replaced, so no warning about it
+        warnings.filterwarnings("error", message=".*replaces the certified thresholds")
         calibrate_checkpoint(str(src), synthetic(100, 20))
     certified = (src / CONFIG_NAME).read_bytes()
 

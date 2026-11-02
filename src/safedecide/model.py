@@ -105,7 +105,9 @@ def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, temperature: float 
     return torch.softmax(z, dim=-1)
 
 
-def batch_indices(decisions: Sequence[Decision], max_pairs: int, shuffle: bool = True, seed: int = 0) -> list[list[int]]:
+def batch_indices(
+    decisions: Sequence[Decision], max_pairs: int, shuffle: bool = True, seed: int = 0
+) -> list[list[int]]:
     """Greedy batching by total option count, so memory stays flat across kinds; positions into ``decisions``."""
     import random
 

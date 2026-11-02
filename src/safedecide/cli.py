@@ -201,9 +201,7 @@ def main(argv=None) -> None:
         "--output-dir",
         help="where the re-calibrated model is written: a Hub model is downloaded there, a local one copied",
     )
-    s.add_argument(
-        "--in-place", action="store_true", help="local --model: replace the thresholds saved in it instead"
-    )
+    s.add_argument("--in-place", action="store_true", help="local --model: replace the thresholds saved in it instead")
     s.add_argument(
         "--refit-temperatures",
         action="store_true",
