@@ -13,6 +13,16 @@ All notable changes to this project are documented here. The format follows
   branch, tag or commit, e.g. the 140M repo's `v0.2` branch, or pin a commit so the weights
   and their certified thresholds cannot change under you. A revision with a local folder is
   an error rather than ignored.
+- `one_per_case` certification: `safedecide calibrate --one-per-case`,
+  `calibrate_checkpoint(..., one_per_case=True)`, `pipeline.certify_rules` and
+  `safedecide.one_per_case` (positions of one seeded-random decision per case) certify on
+  one decision per case, which is valid when whole cases are exchangeable. A labelled line
+  may name its case with a `"case"` field (default: its state). `automation_at_alpha`
+  takes `one_per_case=True` to measure the cost: on the saved typed-decisions `test`
+  predictions of SafeDecide-140M v0.1, automation at a 10% budget falls from 32.4% to 3.9%.
+- `calibrate` warns (`ClusteredCalibrationWarning`) when calibration decisions repeat
+  cases and `one_per_case` is off. The calibration record in `safedecide_config.json` adds
+  `n_cases` and `one_per_case`.
 
 ### Fixed
 
@@ -32,6 +42,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- docs/METHOD.md stated that calibration decisions are i.i.d. draws. The assumption the
+  bound uses is exchangeability of the units it certifies; questions about one case are
+  correlated, and with each decision counted as a unit the Clopper–Pearson bound can be
+  optimistic. METHOD.md, the README and the model card template now say so, and say that
+  the shipped thresholds and published automation figures (unchanged) count decisions as
+  units.
 - `safedecide calibrate --model <local folder>` needs `--output-dir DIR` (a re-calibrated
   copy) or `--in-place` (replace the thresholds in that folder); it no longer overwrites a
   local checkpoint by default.

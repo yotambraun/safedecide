@@ -18,8 +18,9 @@ We want λ such that the **selective error**
 
 is at most α, with high probability over the calibration data.
 
-Procedure, given *n* labelled calibration decisions, exchangeable with
-deployment data:
+Procedure, given *n* labelled calibration units exchangeable with the units
+it will be applied to. A unit is one decision by default, or one decision per
+case with `one_per_case` (below):
 
 1. Fix a grid Λ of thresholds *before looking at data* (96 values in [0, 0.999]).
 2. For each λ ∈ Λ: let *n_λ* = number of calibration decisions with c ≥ λ and
@@ -31,10 +32,11 @@ deployment data:
    stops at its first failure. Choose the smallest certified λ over all chains
    (the most automation). If none is certified, automate nothing.
 
-**Why it is valid.** For a fixed λ, conditional on *n_λ*, the selected
-calibration decisions are i.i.d. draws from the deployment distribution
-restricted to {c ≥ λ}, so *k_λ ~ Binomial(n_λ, R(λ))* and the Clopper–Pearson
-bound is exact. Fixed-sequence testing in an order fixed in advance controls
+**Why it is valid.** Assume the calibration units are i.i.d. draws from the
+distribution deployment units come from (exchangeability is what the argument
+uses). For a fixed λ, conditional on *n_λ*, the selected calibration units are
+then i.i.d. draws from that distribution restricted to {c ≥ λ}, so
+*k_λ ~ Binomial(n_λ, R(λ))* and the Clopper–Pearson bound is exact. Fixed-sequence testing in an order fixed in advance controls
 the family-wise error of one chain at its level δ/K (each hypothesis is only
 tested after every earlier one in the chain was rejected, so the first true
 null reached is the only way to err, and that test errs with probability
@@ -80,9 +82,60 @@ at one certified threshold (0.95, ConfTr stage-2 model) the pooled error was
 4.3%, but 11.6% on `snake-v1` and 1.4% on `workflow-controls-v1`. If one task
 matters on its own, calibrate on that task.
 
-**What it does need:** exchangeability. Under distribution shift the promise is
-void. `pipeline.shift_test` calibrates in-distribution and deploys on the OOD
-split to measure how badly it breaks.
+**What it does need:** exchangeability of the units it certifies with the units
+it is applied to. Under distribution shift the promise is void.
+`pipeline.shift_test` calibrates in-distribution and deploys on the OOD split to
+measure how badly it breaks.
+
+**Clustered calibration data.** Calibration decisions are rarely independent.
+typed-decisions asks five questions about each case, and a file of your own
+labelled decisions usually asks several questions about one ticket. Questions
+about one case share its state, and their errors are correlated: a confusing
+case tends to be answered wrongly more than once. Counting each decision as a
+unit then assumes more independence than the data has. *k_λ* is a sum of
+positively correlated indicators, its variance is larger than the binomial's,
+and the Clopper–Pearson bound, which reads *n_λ* as *n_λ* independent draws, can
+be too low: the 1 − δ coverage is no longer guaranteed. The error estimate itself
+stays unbiased; what is overstated is the certainty about it. What is
+exchangeable in such data is whole cases.
+
+`one_per_case` (`safedecide calibrate --one-per-case`, or `conformal.one_per_case`
+for your own confidences) keeps one decision of each calibration case, drawn
+uniformly at random with a fixed seed, and certifies on those. If cases are
+exchangeable, these are i.i.d. draws, so the argument above holds exactly. The
+promise is then about a uniformly random question of a new case. That is the
+per-decision error when every case asks the same number of questions, as in
+typed-decisions; when the number varies, it weights cases equally rather than
+decisions. `calibrate` uses the `case` field of each line when there is one, and
+the state otherwise. When cases repeat and `one_per_case` is off, it warns
+(`ClusteredCalibrationWarning`).
+
+The price is data: one unit per case instead of one per decision. On the saved
+per-decision test predictions of SafeDecide-140M v0.1 (typed-decisions `test`,
+2,000 decisions in 400 cases), over the same 100 case splits as the results (half
+the cases calibrate, the other half test):
+
+| Budget | All decisions as units | One decision per case |
+|---|---|---|
+| 5% | 4.7% automated, certified in 32 of 100 splits | 0.0%, certified in none |
+| 10% | 32.4% ± 5.5, certified in 100 of 100 | 3.9% ± 10.1, certified in 14 |
+| 20% | 70.3% ± 5.5, certified in 100 of 100 | 43.8% ± 23.3, certified in 88 |
+
+(The all-decisions row recomputes the README's 33.2% from these files and gets
+32.4%.) A certificate that keeps every question and bounds the error per case
+would waste less of the data; it is not implemented. In the simulation in
+`test_conformal.py::test_one_per_case_stays_valid_on_clustered_data_where_all_rows_do_not`,
+where every question of a case shares its outcome, the all-decisions rule exceeds
+its 10% budget in about 17% of calibration draws (δ = 10%), and one decision per
+case in under 1%.
+
+The shipped thresholds and every *Automation @ α* figure in the results count
+decisions as units (the shipped ones: 600 decisions in 120 cases), so they rest on
+decision-level exchangeability, which clustering violates. They are left as
+published. On typed-decisions `test`, the share of the 100 splits whose test half
+went over budget was 0.09 at 10% and 0.10 at 20% for v0.1 (all-decisions rule), at
+most δ. That check also runs on case-correlated test halves, so it is reassuring,
+not a proof.
 
 `test_conformal.py::test_selective_guarantee_holds_on_fresh_data` checks the
 violation rate empirically (200 trials, fresh test data each time).
@@ -157,7 +210,8 @@ On your own labelled decisions (`safedecide calibrate --data`), the checkpoint's
 saved temperatures are kept by default and the whole file is set B. The
 temperatures were fitted before that file was seen, so the guarantee is
 unaffected, and none of a small file is spent on them. `--refit-temperatures`
-restores the two-halves split.
+restores the two-halves split. With `--one-per-case`, the threshold is certified
+on one decision per case of set B (§2).
 
 The release is the stage-2 model with the lowest validation NLL. Choosing it by
 automation on B would reuse the data behind its guarantee.

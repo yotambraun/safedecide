@@ -226,6 +226,15 @@ never saw:
 A more accurate model on your data needs fewer; a budget that cannot be certified
 escalates everything rather than promise too much.
 
+Lines that share a `state` are one case; add a `"case"` field (a ticket id, say) when
+questions about one case have different states. Questions about one case are correlated,
+and by default each line counts as an independent unit, which can make the certificate
+optimistic, so `calibrate` warns when cases repeat. `--one-per-case` certifies on one
+random line per case instead, which is valid as long as whole cases are exchangeable,
+but it has far fewer units to work with: on typed-decisions test, the 140M model's
+automation at 10% falls from 32% to 4% this way
+([method](https://github.com/yotambraun/safedecide/blob/main/docs/METHOD.md#2-the-guarantee-selective-risk-control)).
+
 Already running another decision model? The guarantee needs only its confidences and
 whether each answer was right:
 
@@ -235,6 +244,9 @@ from safedecide import calibrate_selective
 rule = calibrate_selective(confidence, correct, alpha=0.1, delta=0.1)
 rule.threshold  # automate when confidence >= threshold (inf: nothing could be certified)
 ```
+
+With several questions per case, `idx = safedecide.one_per_case(case_ids)` and
+`calibrate_selective(confidence[idx], correct[idx], ...)` certify on one per case.
 
 ## Measure any decision model
 
@@ -256,7 +268,9 @@ safedecide benchmark --http http://localhost:8000 --out results/
    threshold any walk certified.
 
 This is Learn-then-Test (Angelopoulos et al., 2021) with binomial p-values. It needs
-exchangeable data, not calibrated probabilities. The released model is trained with
+calibration units exchangeable with the ones it is applied to, not calibrated
+probabilities. By default a unit is one decision, which overstates the evidence when
+several questions are asked about one case; `--one-per-case` makes a unit one case. The released model is trained with
 proper scoring rules (cross-entropy against teacher distributions, Brier score, and
 ranked probability score for ordinal questions); Conformal Training (Stutz et al.,
 2022) was tested as an ablation and is not used.
@@ -270,6 +284,11 @@ has the proof sketch, the assumptions and the known weaknesses.
   against a 5% budget. Re-calibrate on your own traffic.
 - It is marginal over the calibration distribution, not per class, per task or per
   customer.
+- The shipped thresholds, and every automation figure above, count each decision as an
+  independent unit, but typed-decisions asks five questions per case and they are
+  correlated, so the certificate can be optimistic. They are left as published;
+  `--one-per-case` gives one that only assumes exchangeable cases, at a large cost in
+  automation (see Calibrate on your own data).
 - On typed-decisions the reference labels come from a teacher model, so "error"
   means disagreement with that teacher.
 - Decisions, not reasoning: questions that need multi-step reasoning or world
