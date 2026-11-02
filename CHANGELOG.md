@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
   label. It now accepts true/false, yes/no and 1/0 in any case, JSON booleans and the
   integers 1/0, and raises an error naming the file and line for anything else. Malformed
   lines and lines without an `answer` are reported the same way.
+- `SafeDecider.logits` (and so `predict_proba` and `decide`) matched results to inputs by
+  object identity, so passing the same `Decision` object twice left a slot empty and
+  crashed. Results are now matched by position.
 
 ## [0.2.0] - 2026-10-26
 

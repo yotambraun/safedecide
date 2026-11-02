@@ -105,10 +105,8 @@ def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, temperature: float 
     return torch.softmax(z, dim=-1)
 
 
-def make_batches(
-    decisions: Sequence[Decision], max_pairs: int, shuffle: bool = True, seed: int = 0
-) -> list[list[Decision]]:
-    """Greedy batching by total option count, so memory stays flat across kinds."""
+def batch_indices(decisions: Sequence[Decision], max_pairs: int, shuffle: bool = True, seed: int = 0) -> list[list[int]]:
+    """Greedy batching by total option count, so memory stays flat across kinds; positions into ``decisions``."""
     import random
 
     order = list(range(len(decisions)))
@@ -120,11 +118,18 @@ def make_batches(
         if cur and pairs + k > max_pairs:
             batches.append(cur)
             cur, pairs = [], 0
-        cur.append(decisions[i])
+        cur.append(i)
         pairs += k
     if cur:
         batches.append(cur)
     return batches
+
+
+def make_batches(
+    decisions: Sequence[Decision], max_pairs: int, shuffle: bool = True, seed: int = 0
+) -> list[list[Decision]]:
+    """:func:`batch_indices`, as lists of decisions."""
+    return [[decisions[i] for i in b] for b in batch_indices(decisions, max_pairs, shuffle, seed)]
 
 
 def autocast_dtype(device: str) -> torch.dtype | None:

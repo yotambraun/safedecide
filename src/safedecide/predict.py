@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from .calibration import calibrated_probs
-from .model import autocast_dtype, forward_decisions, load_backbone, make_batches
+from .model import autocast_dtype, batch_indices, forward_decisions, load_backbone
 from .schema import Decision, decisions_from_systemone_request
 
 CONFIG_NAME = "safedecide_config.json"
@@ -94,14 +94,14 @@ class SafeDecider:
     def logits(self, decisions: Sequence[Decision], max_pairs: int = 256) -> list[np.ndarray]:
         """Raw per-option logits (ragged), in input order."""
         out: list[np.ndarray | None] = [None] * len(decisions)
-        index = {id(d): i for i, d in enumerate(decisions)}
         amp_dtype = None if self.full_precision else autocast_dtype(self.device)
-        for batch in make_batches(decisions, max_pairs, shuffle=False):
+        for idx in batch_indices(decisions, max_pairs, shuffle=False):
+            batch = [decisions[i] for i in idx]
             with torch.autocast("cuda", dtype=amp_dtype, enabled=amp_dtype is not None):
                 lg, _ = forward_decisions(self.model, self.tokenizer, batch, self.max_length, self.device)
             lg = lg.float().cpu().numpy()
-            for b, d in enumerate(batch):
-                out[index[id(d)]] = lg[b, : d.num_options]
+            for b, i in enumerate(idx):  # by position: the same object may appear twice
+                out[i] = lg[b, : decisions[i].num_options]
         return out  # type: ignore[return-value]
 
     def predict_proba(self, decisions: Sequence[Decision], calibrated: bool = True) -> list[np.ndarray]:

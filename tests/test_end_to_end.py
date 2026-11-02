@@ -341,3 +341,18 @@ def test_stage_two_starts_from_checkpoint(tiny, tmp_path):
     assert summary["steps"] == 2
     assert cfg["base_model"] == "jhu-clsp/mmBERT-small"
     assert cfg["init_from"] == "best"
+
+
+@pytest.mark.e2e
+def test_same_decision_object_twice(tiny):
+    """Results are matched to inputs by position, so a repeated object gets an answer in every slot."""
+    from safedecide.predict import SafeDecider
+
+    tok, model, _ = tiny
+    decider = SafeDecider(model, tok, device="cpu")
+    d = Decision("a", "choice", "customer says crash", "which team?", ["billing", "technical", "account"])
+    other = Decision("b", "noul", "customer says login", "is this urgent?", ["false", "true"])
+    out = decider.logits([d, other, d], max_pairs=3)  # one decision per batch: the repeat lands in another batch
+    assert len(out) == 3 and all(x is not None for x in out)
+    assert np.allclose(out[0], out[2], atol=1e-5)
+    assert out[1].shape == (2,)
