@@ -42,6 +42,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The package's project URLs list the 400M model next to the 140M one.
 - The release workflow's wheel smoke test runs `scripts/smoke_installed.py`: it checks the
   package was imported from the install, that the model card template and `py.typed` are in
   the wheel, and renders a card, reads labelled JSONL and certifies a rule, all offline.
