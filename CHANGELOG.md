@@ -24,6 +24,17 @@ All notable changes to this project are documented here. The format follows
 - `SafeDecider.logits` (and so `predict_proba` and `decide`) matched results to inputs by
   object identity, so passing the same `Decision` object twice left a slot empty and
   crashed. Results are now matched by position.
+- `calibrate_checkpoint` ignored `output_dir` for a local checkpoint and overwrote the
+  checkpoint's own `safedecide_config.json`, its certified thresholds, in place. With
+  `output_dir` it now copies the checkpoint there (without `onnx/` and `assets/`, as a Hub
+  download does) and re-calibrates the copy. Without `output_dir` it still calibrates in
+  place, as the training notebooks do, but warns when that replaces certified thresholds.
+
+### Changed
+
+- `safedecide calibrate --model <local folder>` needs `--output-dir DIR` (a re-calibrated
+  copy) or `--in-place` (replace the thresholds in that folder); it no longer overwrites a
+  local checkpoint by default.
 
 ## [0.2.0] - 2026-10-26
 

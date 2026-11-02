@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import warnings
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
@@ -62,15 +64,30 @@ def calibrate_checkpoint(
     separate guarantee; ``alpha`` is the default one. Pick the level from your
     error budget, not from which level automates most.
 
-    ``path`` is a local checkpoint or a Hub repo id. A Hub model is first
-    downloaded into ``output_dir`` (default: a folder named after the repo), and
-    the re-calibrated copy lives there. ``revision`` picks the Hub branch, tag or commit.
+    Where the result is written:
+
+    * ``path`` is a Hub repo id: it is downloaded into ``output_dir`` (default: a folder
+      named after the repo) and re-calibrated there; ``revision`` picks the branch, tag
+      or commit. The Hub cache is never written to.
+    * ``path`` is a local checkpoint and ``output_dir`` is another folder: the checkpoint
+      is copied there (without ``onnx/`` and ``assets/``, as from the Hub) and the copy is
+      re-calibrated. The source is left untouched.
+    * ``path`` is a local checkpoint and ``output_dir`` is ``None`` (or ``path`` itself):
+      calibrated in place, as the training notebooks do with fresh checkpoints. If the
+      checkpoint already holds certified thresholds, a ``UserWarning`` says they are replaced.
+
+    The returned dict's ``path`` is the folder written to; load it with
+    :meth:`SafeDecider.from_pretrained`.
     """
-    if not Path(path).is_dir():
-        path = resolve_model_dir(path, local_dir=output_dir or path.rstrip("/").split("/")[-1], revision=revision)
-    elif revision is not None:
-        raise ValueError(f"revision={revision!r} selects a Hub revision, but {path} is a local folder")
+    path, in_place = _calibration_target(path, output_dir, revision)
     decider = SafeDecider.from_pretrained(path, full_precision=True)  # the precision users run on CPU
+    if in_place and (decider.config.get("selective_rules") or decider.config.get("selective_rule")):
+        warnings.warn(
+            f"calibrating {path} in place replaces the certified thresholds saved there; "
+            "pass output_dir to write a re-calibrated copy instead",
+            UserWarning,
+            stacklevel=2,
+        )
     cal = list(calibration_set)
     if keep_temperatures:
         if "temperatures" not in decider.config:
@@ -110,6 +127,23 @@ def calibrate_checkpoint(
     )
     decider.save_config(path)
     return {**decider.config, "path": str(path)}
+
+
+def _calibration_target(path: str, output_dir: str | None, revision: str | None) -> tuple[str, bool]:
+    """The folder :func:`calibrate_checkpoint` writes to, and whether that is the source checkpoint itself."""
+    if not Path(path).is_dir():
+        local = output_dir or path.rstrip("/").split("/")[-1]
+        return resolve_model_dir(path, local_dir=local, revision=revision), False
+    if revision is not None:
+        raise ValueError(f"revision={revision!r} selects a Hub revision, but {path} is a local folder")
+    src = Path(path).resolve()
+    if output_dir is None or Path(output_dir).resolve() == src:
+        return str(path), True
+    dst = Path(output_dir).resolve()
+    if src in dst.parents:
+        raise ValueError(f"output_dir {output_dir} is inside the checkpoint {path}; choose a folder outside it")
+    shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("onnx", "assets"))
+    return str(output_dir), False
 
 
 def benchmark(

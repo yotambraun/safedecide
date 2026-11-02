@@ -62,6 +62,13 @@ def cmd_calibrate(a):
     from .pipeline import calibrate_checkpoint
     from .schema import labelled_decisions_from_jsonl
 
+    if Path(a.model).is_dir() and not a.output_dir and not a.in_place:
+        raise SystemExit(
+            f"safedecide calibrate: {a.model} is a local checkpoint. Pass --output-dir DIR to write a "
+            "re-calibrated copy, or --in-place to replace the thresholds certified in it."
+        )
+    if a.in_place and a.output_dir:
+        raise SystemExit("safedecide calibrate: choose --output-dir or --in-place, not both")
     if a.data:
         cal = labelled_decisions_from_jsonl(a.data)
     else:  # the calibration split of the model's own training data
@@ -189,7 +196,13 @@ def main(argv=None) -> None:
     s.add_argument("--model", required=True, help="local checkpoint or Hub repo id")
     s.add_argument("--revision", help=REVISION_HELP)
     s.add_argument("--data", help="your labelled decisions, one JSON object per line (see README)")
-    s.add_argument("--output-dir", help="where a Hub model is downloaded and re-calibrated")
+    s.add_argument(
+        "--output-dir",
+        help="where the re-calibrated model is written: a Hub model is downloaded there, a local one copied",
+    )
+    s.add_argument(
+        "--in-place", action="store_true", help="local --model: replace the thresholds saved in it instead"
+    )
     s.add_argument(
         "--refit-temperatures",
         action="store_true",

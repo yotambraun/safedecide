@@ -208,6 +208,10 @@ safedecide calibrate --model yotambr/safedecide-140m --data my_decisions.jsonl -
 decider = SafeDecider.from_pretrained("safedecide-mine")  # same model, your thresholds
 ```
 
+The model is downloaded into `--output-dir` and re-calibrated there. A local checkpoint is
+copied into `--output-dir` the same way, so the original keeps its thresholds; to replace
+them instead, pass `--in-place` rather than `--output-dir`.
+
 The model keeps the temperatures it shipped with, so every line of your file goes to
 the threshold (`--refit-temperatures` spends half of it refitting them instead). How
 many lines you need, measured on held-out typed-decisions questions the temperatures

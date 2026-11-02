@@ -146,7 +146,7 @@ def test_full_pipeline(tiny, tmp_path):
     ]
     mine = tmp_path / "mine.jsonl"
     mine.write_text("\n".join(json.dumps(r) for r in lines), encoding="utf-8")
-    main(["calibrate", "--model", best, "--data", str(mine)])
+    main(["calibrate", "--model", best, "--data", str(mine), "--in-place"])
     calibration = load_config(best)["calibration"]
     assert calibration["sources"] == {"jsonl": len(lines)}
     assert calibration["temperatures_kept"] and calibration["n_selective"] == len(lines)  # all of it to the threshold
@@ -360,3 +360,43 @@ def test_same_decision_object_twice(tiny):
     assert len(out) == 3 and all(x is not None for x in out)
     assert np.allclose(out[0], out[2], atol=1e-5)
     assert out[1].shape == (2,)
+
+
+@pytest.mark.e2e
+def test_calibrating_a_local_checkpoint_never_overwrites_it_silently(tiny, tmp_path):
+    import warnings
+
+    from safedecide.cli import main
+    from safedecide.pipeline import calibrate_checkpoint
+    from safedecide.predict import CONFIG_NAME, SafeDecider
+
+    tok, model, _ = tiny
+    src = tmp_path / "ckpt"
+    model.save_pretrained(src)
+    tok.save_pretrained(src)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # a checkpoint without thresholds yet: nothing is replaced, no warning
+        calibrate_checkpoint(str(src), synthetic(100, 20))
+    certified = (src / CONFIG_NAME).read_bytes()
+
+    # output_dir: a re-calibrated copy, the source keeps its thresholds
+    out = tmp_path / "mine"
+    cfg = calibrate_checkpoint(str(src), synthetic(100, 21), output_dir=str(out), keep_temperatures=True)
+    assert cfg["path"] == str(out)
+    assert (src / CONFIG_NAME).read_bytes() == certified
+    assert json.loads((out / CONFIG_NAME).read_text(encoding="utf-8"))["calibration"]["n_selective"] == 200
+    assert SafeDecider.from_pretrained(str(out), device="cpu").config["calibration"]["temperatures_kept"]
+
+    # in place: allowed, but replacing certified thresholds says so
+    with pytest.warns(UserWarning, match="replaces the certified thresholds"):
+        calibrate_checkpoint(str(src), synthetic(100, 22))
+    with pytest.raises(ValueError, match="inside"):
+        calibrate_checkpoint(str(src), synthetic(100, 22), output_dir=str(src / "sub"))
+
+    # the command line asks which one you mean
+    data = tmp_path / "mine.jsonl"
+    data.write_text(
+        json.dumps({"state": "customer says refund", "question": {"type": "noul"}, "answer": "no"}), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit, match="--output-dir"):
+        main(["calibrate", "--model", str(src), "--data", str(data)])
